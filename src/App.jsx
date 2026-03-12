@@ -23,9 +23,8 @@ import {
 } from 'lucide-react';
 
 /**
- * [사계절 런앤맵 프로젝트 최종 배포본]
- * 디자인 도구가 작동하지 않는 환경을 위해 CDN 로딩을 강화하고
- * 메인 화면을 연한 녹색 테마로 아주 예쁘게 리뉴얼했습니다.
+ * [사계절 런앤맵 프로젝트 최종 보강본 - 스타일 내장형]
+ * 디자인 도구 로딩 실패를 방지하기 위해 CSS 스타일을 직접 내장했습니다.
  */
 const firebaseConfig = {
   apiKey: "AIzaSyBYfwtdXjz4ekJbH83merNVPZemb_bc3NE",
@@ -38,7 +37,7 @@ const firebaseConfig = {
   databaseURL: "https://fourseason-run-and-map-default-rtdb.firebaseio.com/" 
 };
 
-// 1. Firebase 초기화
+// Firebase 초기화
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getDatabase(app);
@@ -56,7 +55,6 @@ const GEUMJEONG_CENTER = [35.243, 129.092];
 
 export default function App() {
   const [user, setUser] = useState(null);
-  const [authError, setAuthError] = useState(null); 
   const [nickname, setNickname] = useState(localStorage.getItem('team_nickname') || '');
   const [isSettingNickname, setIsSettingNickname] = useState(!localStorage.getItem('team_nickname'));
   const [activeTab, setActiveTab] = useState('map');
@@ -78,34 +76,20 @@ export default function App() {
     image: null
   });
 
-  // 라이브러리 및 스타일 강제 로드 로직
+  // 지도 라이브러리 로드
   useEffect(() => {
-    // Tailwind CSS 강제 주입 (디자인 깨짐 방지 핵심)
-    if (!document.getElementById('tailwind-cdn')) {
-      const twScript = document.createElement('script');
-      twScript.id = 'tailwind-cdn';
-      twScript.src = 'https://cdn.tailwindcss.com';
-      document.head.appendChild(twScript);
-    }
-
-    // Leaflet 지도 스타일
     const link = document.createElement('link');
     link.rel = 'stylesheet';
     link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
     document.head.appendChild(link);
 
-    // Leaflet 지도 엔진
     const script = document.createElement('script');
     script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
     script.async = true;
     script.onload = () => setIsScriptLoaded(true);
     document.head.appendChild(script);
 
-    const timer = setInterval(() => setCurrentTime(new Date()), 1000);
-    return () => {
-      clearInterval(timer);
-      if (leafletMap.current) leafletMap.current.remove();
-    };
+    return () => { if (leafletMap.current) leafletMap.current.remove(); };
   }, []);
 
   // 지도 초기화
@@ -120,16 +104,9 @@ export default function App() {
     }
   }, [isScriptLoaded, activeTab]);
 
-  // 인증
+  // Firebase 인증
   useEffect(() => {
-    const tryLogin = async () => {
-      try {
-        await signInAnonymously(auth);
-      } catch (err) {
-        setAuthError(err.code === 'auth/configuration-not-found' ? "익명 로그인을 켜주세요." : err.message);
-      }
-    };
-    tryLogin();
+    signInAnonymously(auth).catch(console.error);
     const unsubscribe = onAuthStateChanged(auth, setUser);
     return () => unsubscribe();
   }, []);
@@ -144,38 +121,21 @@ export default function App() {
         const formatted = Object.keys(data).map(key => ({ id: key, ...data[key] })).reverse();
         setReports(formatted);
         updateMarkers(formatted);
-      } else {
-        setReports([]);
-        if (leafletMap.current) {
-          Object.values(markersRef.current).forEach(m => m.remove());
-          markersRef.current = {};
-        }
       }
     });
     return () => unsubscribe();
-  }, [user, isScriptLoaded, activeTab]);
+  }, [user, isScriptLoaded]);
 
   const updateMarkers = (data) => {
     if (!window.L || !leafletMap.current) return;
     Object.values(markersRef.current).forEach(m => m.remove());
     markersRef.current = {};
-
     data.forEach(report => {
       const cat = TRASH_CATEGORIES.find(c => c.id === report.category) || TRASH_CATEGORIES[4];
-      const iconHtml = `
-        <div style="background-color:${cat.color}; width:34px; height:34px; border-radius:12px; border:2px solid white; display:flex; align-items:center; justify-content:center; font-size:18px; box-shadow:0 4px 12px rgba(0,0,0,0.15); transform:rotate(45deg);">
-          <div style="transform:rotate(-45deg)">${cat.icon}</div>
-        </div>
-      `;
+      const iconHtml = `<div style="background-color:${cat.color}; width:34px; height:34px; border-radius:12px; border:2px solid white; display:flex; align-items:center; justify-content:center; font-size:18px; box-shadow:0 4px 12px rgba(0,0,0,0.15); transform:rotate(45deg);"><div style="transform:rotate(-45deg)">${cat.icon}</div></div>`;
       const icon = window.L.divIcon({ html: iconHtml, className: 'custom-pin', iconSize: [34, 34], iconAnchor: [17, 17] });
       const marker = window.L.marker([report.location.lat, report.location.lng], { icon }).addTo(leafletMap.current);
-      
-      marker.bindPopup(`
-        <div style="font-family:sans-serif; min-width:140px;">
-          <b style="color:${cat.color}">${cat.icon} ${cat.label}</b><br/>
-          <small>by ${report.userName}</small>
-        </div>
-      `);
+      marker.bindPopup(`<b>${cat.label}</b><br/>by ${report.userName}`);
       markersRef.current[report.id] = marker;
     });
   };
@@ -207,125 +167,74 @@ export default function App() {
     if (!user) return;
     const center = leafletMap.current ? leafletMap.current.getCenter() : { lat: GEUMJEONG_CENTER[0], lng: GEUMJEONG_CENTER[1] };
     const loc = formData.customLocation || { lat: center.lat, lng: center.lng };
-    await push(ref(db, 'reports'), { 
-      ...formData, location: loc, userName: nickname, discoveredTime: currentTime.toISOString() 
-    });
+    await push(ref(db, 'reports'), { ...formData, location: loc, userName: nickname, discoveredTime: currentTime.toISOString() });
     setFormData({ category: 'cup', area: GEUMJEONG_AREAS[0], description: '', status: 'pending', customLocation: null, image: null });
     setActiveTab('map');
   };
 
-  if (authError) return <div className="p-10 text-center font-bold text-red-500">{authError}</div>;
-
   /**
    * [메인 화면 - 연한 녹색 업그레이드 디자인]
+   * 외부 CSS 없이도 작동하도록 스타일을 객체로 직접 정의했습니다.
    */
   if (isSettingNickname) {
     return (
-      <div className="min-h-screen bg-[#f0fdf4] flex flex-col items-center justify-center p-8 font-sans relative overflow-hidden">
-        {/* 장식용 배경 요소 */}
-        <div className="absolute top-[-10%] left-[-10%] w-64 h-64 bg-emerald-200/40 rounded-full blur-3xl"></div>
-        <div className="absolute bottom-[-5%] right-[-5%] w-80 h-80 bg-green-200/30 rounded-full blur-3xl"></div>
-
-        <div className="w-full max-w-sm z-10 text-center">
-          {/* 상단 로고 영역 */}
-          <div className="mb-12 animate-bounce-slow">
-            <div className="bg-emerald-600 w-24 h-24 rounded-[32px] flex items-center justify-center mb-6 mx-auto shadow-2xl shadow-emerald-200/50 rotate-12">
-              <Navigation size={48} className="text-white" fill="currentColor" />
-            </div>
-            <h1 className="text-4xl font-black text-slate-800 tracking-tighter italic mb-1 uppercase">Four Seasons</h1>
-            <div className="flex items-center justify-center gap-2 text-emerald-600 font-bold text-[10px] tracking-[0.4em] uppercase opacity-80">
-              <Leaf size={12}/> Run & Map Geumjeong
-            </div>
-          </div>
-
-          {/* 입력 카드 */}
-          <div className="bg-white/80 backdrop-blur-2xl p-10 rounded-[48px] shadow-[0_20px_50px_rgba(0,0,0,0.05)] border border-white/50 relative overflow-hidden">
-            <div className="absolute top-0 left-0 w-full h-2 bg-emerald-500"></div>
-            
-            <div className="mb-8">
-              <h2 className="text-2xl font-black text-slate-800 mb-2 tracking-tight">반가워요 활동가님!</h2>
-              <p className="text-slate-500 text-xs font-medium leading-relaxed">
-                금정구의 깨끗한 내일을 위해<br/>오늘 사용할 닉네임을 적어주세요.
-              </p>
-            </div>
-            
-            <form onSubmit={(e) => { e.preventDefault(); if(nickname.trim()){ localStorage.setItem('team_nickname', nickname); setIsSettingNickname(false); } }} className="space-y-4">
-              <div className="relative group">
-                <div className="absolute left-5 top-1/2 -translate-y-1/2 text-emerald-500 transition-transform group-focus-within:scale-110">
-                  <User size={22}/>
-                </div>
-                <input 
-                  type="text" 
-                  value={nickname} 
-                  onChange={e => setNickname(e.target.value)} 
-                  placeholder="예: 금정_철수" 
-                  className="w-full pl-14 pr-6 py-5 rounded-[24px] bg-emerald-50/50 border-2 border-transparent focus:border-emerald-500 focus:bg-white outline-none font-bold text-slate-700 transition-all text-lg shadow-inner"
-                  autoFocus 
-                />
-              </div>
-              
-              <button className="w-full bg-emerald-600 text-white font-black py-5 rounded-[24px] shadow-xl shadow-emerald-200 active:scale-95 transition-all text-lg flex items-center justify-center gap-3 hover:bg-emerald-700 group">
-                활동 시작하기 
-                <div className="bg-white/20 p-1 rounded-full group-hover:translate-x-1 transition-transform">
-                  <ChevronRight size={18}/>
-                </div>
-              </button>
-            </form>
-          </div>
-          
-          <div className="mt-12 flex flex-col items-center gap-4">
-             <div className="flex items-center gap-4 text-slate-300">
-                <Heart size={16} fill="currentColor"/>
-                <div className="w-12 h-[1px] bg-slate-200"></div>
-                <Heart size={16} fill="currentColor"/>
-             </div>
-             <p className="text-[10px] font-bold text-slate-400 uppercase tracking-[0.2em]">
-               © 2024 Four Seasons Team Project
-             </p>
+      <div style={styles.mainContainer}>
+        {/* 상단 텍스트 로고 */}
+        <div style={styles.logoSection}>
+          <h1 style={styles.titleText}>FOUR SEASONS</h1>
+          <div style={styles.subTitleText}>
+            RUN & MAP GEUMJEONG
           </div>
         </div>
 
-        <style>{`
-          @keyframes bounce-slow {
-            0%, 100% { transform: translateY(0); }
-            50% { transform: translateY(-10px); }
-          }
-          .animate-bounce-slow { animation: bounce-slow 3s ease-in-out infinite; }
-        `}</style>
+        {/* 메인 입력 카드 */}
+        <div style={styles.card}>
+          <h2 style={styles.cardHeading}>반가워요!</h2>
+          <p style={styles.cardSub}>활동을 위해 닉네임을 입력해 주세요.</p>
+          
+          <form style={styles.form} onSubmit={(e) => { e.preventDefault(); if(nickname.trim()){ localStorage.setItem('team_nickname', nickname); setIsSettingNickname(false); } }}>
+            <div style={styles.inputWrapper}>
+              <input 
+                type="text" 
+                value={nickname} 
+                onChange={e => setNickname(e.target.value)} 
+                placeholder="예: 금정_철수" 
+                style={styles.inputField}
+                autoFocus 
+              />
+            </div>
+            <button style={styles.submitButton}>
+              기록 시작하기 <ChevronRight size={24} strokeWidth={3} />
+            </button>
+          </form>
+        </div>
+        
+        <p style={styles.footerText}>© 2024 Four Seasons Team Project</p>
       </div>
     );
   }
 
-  // 본 화면 (메인 서비스)
   return (
-    <div className="h-screen flex flex-col bg-[#f0fdf4] font-sans text-slate-900 overflow-hidden">
-      <header className="bg-white/80 backdrop-blur-xl p-4 border-b border-emerald-100 flex justify-between items-center z-[1000] sticky top-0 shadow-sm">
-        <div className="flex items-center gap-2">
-          <div className="bg-emerald-600 p-2 rounded-xl text-white shadow-lg shadow-emerald-200"><Navigation size={18} fill="currentColor"/></div>
-          <h1 className="text-sm font-black text-slate-800 tracking-tighter uppercase">Four Seasons</h1>
+    <div style={{...styles.appRoot, backgroundColor: '#f0fdf4'}}>
+      <header style={styles.header}>
+        <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
+          <div style={styles.headerIcon}><Navigation size={18} fill="currentColor"/></div>
+          <h1 style={styles.headerTitle}>Four Seasons</h1>
         </div>
-        <div className="bg-emerald-100/50 px-3 py-1.5 rounded-full border border-emerald-100 font-bold text-[11px] text-emerald-700 flex items-center gap-2">
-           <span className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></span> {nickname}
-        </div>
+        <div style={styles.headerUser}>{nickname} 활동가</div>
       </header>
 
-      <main className="flex-1 relative overflow-hidden">
+      <main style={styles.mainContent}>
         {/* 탭 1: 지도 */}
-        <div className={`absolute inset-0 transition-opacity duration-300 ${activeTab === 'map' ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'}`}>
-          <div ref={mapContainerRef} className="w-full h-full" />
-          <div className="absolute bottom-28 left-4 right-4 z-[1001]">
-            <div className="bg-white/95 backdrop-blur-md p-5 rounded-[36px] shadow-2xl flex justify-between items-center border border-emerald-50">
-               <div className="flex gap-6 pl-4">
-                 <div className="text-center">
-                   <p className="text-[9px] font-black text-slate-400 mb-1 tracking-widest uppercase italic">Trash</p>
-                   <p className="text-2xl font-black text-slate-800 leading-none">{reports.length}</p>
-                 </div>
-                 <div className="text-center border-l border-slate-100 pl-6">
-                   <p className="text-[9px] font-black text-slate-400 mb-1 tracking-widest uppercase italic">Solved</p>
-                   <p className="text-2xl font-black text-emerald-600 leading-none">{reports.filter(r => r.status === 'solved').length}</p>
-                 </div>
+        <div style={{...styles.tabView, opacity: activeTab === 'map' ? 1 : 0, zIndex: activeTab === 'map' ? 10 : 0}}>
+          <div ref={mapContainerRef} style={{width: '100%', height: '100%'}} />
+          <div style={styles.floatingPanel}>
+            <div style={styles.statsRow}>
+               <div style={{display: 'flex', gap: '24px', paddingLeft: '16px'}}>
+                 <div style={{textAlign: 'center'}}><p style={styles.statLabel}>Trash</p><p style={styles.statValue}>{reports.length}</p></div>
+                 <div style={styles.statDivider}><p style={styles.statLabel}>Solved</p><p style={{...styles.statValue, color: '#10b981'}}>{reports.filter(r => r.status === 'solved').length}</p></div>
                </div>
-               <button onClick={() => setActiveTab('add')} className="bg-slate-900 text-white px-6 py-4 rounded-[24px] text-sm font-black flex items-center gap-2 active:scale-90 transition-all shadow-xl shadow-slate-200">
+               <button onClick={() => setActiveTab('add')} style={styles.recordButton}>
                  <PlusCircle size={20}/> 기록하기
                </button>
             </div>
@@ -333,88 +242,63 @@ export default function App() {
         </div>
 
         {/* 탭 2: 기록 추가 */}
-        <div className={`absolute inset-0 bg-[#f0fdf4] p-6 overflow-y-auto z-50 transition-transform duration-500 ${activeTab === 'add' ? 'translate-y-0' : 'translate-y-full'}`}>
-          <div className="max-w-md mx-auto">
-            <div className="flex justify-between items-center mb-8">
-              <h2 className="text-2xl font-black tracking-tighter text-slate-800 italic uppercase">New Report</h2>
-              <button onClick={() => setActiveTab('map')} className="p-3 bg-white rounded-2xl text-slate-400 shadow-sm active:scale-90"><X/></button>
+        <div style={{...styles.tabView, backgroundColor: '#f0fdf4', padding: '24px', overflowY: 'auto', transform: activeTab === 'add' ? 'translateY(0)' : 'translateY(100%)', transition: 'transform 0.5s ease', zIndex: 50}}>
+          <div style={{maxWidth: '400px', margin: '0 auto'}}>
+            <div style={styles.formHeader}>
+              <h2 style={styles.formTitle}>New Report</h2>
+              <button onClick={() => setActiveTab('map')} style={styles.closeButton}><X/></button>
             </div>
-            <form onSubmit={handleSave} className="space-y-5 pb-20">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="bg-slate-900 p-6 rounded-[32px] text-white flex flex-col justify-between shadow-xl min-h-[140px]">
-                  <span className="text-[10px] font-black flex items-center gap-2 uppercase tracking-widest text-emerald-400 mb-2"><MapPin size={14}/> Location</span>
-                  <button type="button" onClick={getGPS} className={`px-4 py-3 rounded-2xl text-[10px] font-black transition-all ${formData.customLocation ? 'bg-emerald-500 text-white' : 'bg-white text-slate-900'}`}>
-                    {islocating ? <Loader2 className="animate-spin" size={14}/> : <LocateFixed size={14}/>} {formData.customLocation ? "획득 성공" : "위치 잡기"}
+            <form onSubmit={handleSave} style={{display: 'flex', flexDirection: 'column', gap: '24px'}}>
+              <div style={styles.reportRow}>
+                <div style={styles.gpsCard}>
+                  <span style={styles.gpsLabel}><MapPin size={14}/> Location</span>
+                  <button type="button" onClick={getGPS} style={{...styles.gpsBtn, backgroundColor: formData.customLocation ? '#10b981' : 'white', color: formData.customLocation ? 'white' : '#1a202c'}}>
+                    {islocating ? "..." : "위치 잡기"}
                   </button>
                 </div>
-                
-                <div className="relative">
-                  <input type="file" accept="image/*" capture="environment" onChange={handleImageChange} className="hidden" id="camera-input-sub" />
-                  <label htmlFor="camera-input-sub" className={`cursor-pointer w-full h-[140px] rounded-[32px] border-2 border-dashed flex flex-col items-center justify-center gap-2 transition-all ${formData.image ? 'border-emerald-500 bg-white' : 'border-emerald-200 bg-white/40'}`}>
-                    {formData.image ? (
-                      <img src={formData.image} className="w-full h-full object-cover rounded-[30px]" alt="preview" />
-                    ) : (
-                      <>
-                        <div className="p-3 bg-emerald-100 rounded-2xl text-emerald-600 shadow-sm"><Camera size={24}/></div>
-                        <span className="text-[10px] font-black text-emerald-700 uppercase tracking-widest">현장 사진</span>
-                      </>
-                    )}
+                <div style={styles.photoBox}>
+                  <input type="file" accept="image/*" capture="environment" onChange={handleImageChange} style={{display: 'none'}} id="cam" />
+                  <label htmlFor="cam" style={{...styles.photoLabel, borderColor: formData.image ? '#10b981' : '#a7f3d0'}}>
+                    {formData.image ? <img src={formData.image} style={styles.previewImg} /> : <Camera size={24} color="#10b981"/>}
                   </label>
-                  {formData.image && (
-                    <button type="button" onClick={() => setFormData({...formData, image: null})} className="absolute -top-2 -right-2 p-2 bg-red-500 text-white rounded-full shadow-lg"><X size={12}/></button>
-                  )}
                 </div>
               </div>
-
-              <div className="grid grid-cols-2 gap-3">
+              <div style={styles.categoryGrid}>
                 {TRASH_CATEGORIES.map(c => (
-                  <button key={c.id} type="button" onClick={() => setFormData({...formData, category: c.id})} className={`p-5 rounded-3xl border-2 flex items-center gap-4 transition-all shadow-sm ${formData.category === c.id ? 'border-emerald-500 bg-white text-emerald-700' : 'border-transparent bg-white/50 text-slate-400'}`}>
-                    <span className="text-2xl">{c.icon}</span><span className="text-xs font-black">{c.label}</span>
+                  <button key={c.id} type="button" onClick={() => setFormData({...formData, category: c.id})} style={{...styles.catBtn, borderColor: formData.category === c.id ? '#10b981' : 'transparent', color: formData.category === c.id ? '#065f46' : '#94a3b8'}}>
+                    <span style={{fontSize: '24px'}}>{c.icon}</span><span style={{fontSize: '12px', fontWeight: '900'}}>{c.label}</span>
                   </button>
                 ))}
               </div>
-
-              <div className="space-y-3">
-                <select value={formData.area} onChange={e => setFormData({...formData, area: e.target.value})} className="w-full p-5 rounded-3xl bg-white/70 backdrop-blur-sm border-none font-bold text-sm outline-none shadow-sm focus:ring-2 ring-emerald-400">
-                  {GEUMJEONG_AREAS.map(a => <option key={a}>{a}</option>)}
-                </select>
-                <textarea value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})} placeholder="상황 설명" className="w-full p-6 bg-white/70 backdrop-blur-sm rounded-[32px] h-32 text-sm font-medium outline-none shadow-sm resize-none focus:ring-2 ring-emerald-400" />
-              </div>
-              <button className="w-full bg-emerald-600 text-white font-black py-6 rounded-[32px] shadow-2xl text-lg active:scale-95 transition-all">기록 업로드</button>
+              <textarea value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})} placeholder="어떤 상황인가요?" style={styles.textArea} />
+              <button style={styles.saveButton}>기록 업로드</button>
             </form>
           </div>
         </div>
 
-        {/* 탭 3: 피드 */}
-        <div className={`absolute inset-0 bg-[#f0fdf4] p-6 overflow-y-auto z-20 transition-transform duration-500 ${activeTab === 'list' ? 'translate-x-0' : 'translate-x-full'}`}>
-          <div className="max-w-md mx-auto">
-            <h2 className="text-2xl font-black mb-8 flex items-center gap-3 text-slate-800 italic uppercase">Team Feed</h2>
-            {reports.length === 0 ? (
-              <div className="text-center py-24 text-emerald-300 font-bold italic">아직 기록이 없습니다.</div>
-            ) : reports.map(r => (
-              <div key={r.id} className="bg-white p-6 rounded-[36px] mb-6 shadow-md border border-emerald-100/50">
-                <div className="flex justify-between items-start mb-4">
-                  <div className="flex items-center gap-3">
-                    <span className="text-3xl p-2 bg-emerald-50 rounded-2xl">{TRASH_CATEGORIES.find(c => c.id === r.category)?.icon}</span>
+        {/* 탭 3: 활동 피드 */}
+        <div style={{...styles.tabView, backgroundColor: '#f0fdf4', padding: '24px', overflowY: 'auto', transform: activeTab === 'list' ? 'translateX(0)' : 'translateX(100%)', transition: 'transform 0.5s ease', zIndex: 20}}>
+          <div style={{maxWidth: '400px', margin: '0 auto'}}>
+            <h2 style={styles.formTitle}>Team Feed</h2>
+            {reports.map(r => (
+              <div key={r.id} style={styles.feedCard}>
+                <div style={styles.feedHeader}>
+                  <div style={{display: 'flex', alignItems: 'center', gap: '12px'}}>
+                    <span style={styles.feedIconBox}>{TRASH_CATEGORIES.find(c => c.id === r.category)?.icon}</span>
                     <div>
-                      <h4 className="font-black text-slate-800 text-sm">{TRASH_CATEGORIES.find(c => c.id === r.category)?.label}</h4>
-                      <p className="text-[9px] font-bold text-slate-400 uppercase tracking-tighter">{new Date(r.discoveredTime).toLocaleString('ko-KR')}</p>
+                      <h4 style={{fontSize: '14px', fontWeight: '900'}}>{TRASH_CATEGORIES.find(c => c.id === r.category)?.label}</h4>
+                      <p style={{fontSize: '9px', fontWeight: 'bold', color: '#94a3b8'}}>{new Date(r.discoveredTime).toLocaleString()}</p>
                     </div>
                   </div>
-                  <button onClick={() => set(ref(db, `reports/${r.id}/status`), r.status === 'pending' ? 'solved' : 'pending')} className={`px-4 py-2 rounded-2xl text-[10px] font-black transition-all ${r.status === 'solved' ? 'bg-emerald-600 text-white shadow-lg' : 'bg-slate-100 text-slate-400'}`}>
-                    {r.status === 'solved' ? '해결됨 ✓' : '해결하기'}
+                  <button onClick={() => set(ref(db, `reports/${r.id}/status`), r.status === 'pending' ? 'solved' : 'pending')} style={{...styles.solvedBtn, backgroundColor: r.status === 'solved' ? '#10b981' : '#f1f5f9', color: r.status === 'solved' ? 'white' : '#94a3b8'}}>
+                    {r.status === 'solved' ? '해결됨' : '해결하기'}
                   </button>
                 </div>
-                {r.image && <img src={r.image} className="w-full h-48 object-cover rounded-[28px] mb-4 shadow-inner" alt="쓰레기 현장" />}
-                <p className="text-sm font-medium text-slate-600 mb-6 bg-emerald-50/50 p-5 rounded-[28px] italic leading-relaxed border-l-4 border-emerald-400">
-                  {r.description || "상세 설명이 없습니다."}
-                </p>
-                <div className="flex items-center justify-between pt-4 border-t border-emerald-50">
-                  <div className="flex items-center gap-2">
-                    <div className="w-8 h-8 bg-emerald-100 rounded-2xl flex items-center justify-center text-[10px] font-black text-emerald-700">{r.userName ? r.userName[0] : '익'}</div>
-                    <span className="text-[11px] font-black text-slate-600">{r.userName} 활동가</span>
-                  </div>
-                  <span className="text-[9px] bg-white text-emerald-600 px-3 py-1.5 rounded-full font-black border border-emerald-100 uppercase tracking-widest">{r.area}</span>
+                {r.image && <img src={r.image} style={styles.feedImg} />}
+                <p style={styles.feedDesc}>{r.description || "설명 없음"}</p>
+                <div style={styles.feedFooter}>
+                  <span>👤 {r.userName} 활동가</span>
+                  <span style={styles.feedAreaBadge}>{r.area}</span>
                 </div>
               </div>
             ))}
@@ -422,22 +306,81 @@ export default function App() {
         </div>
       </main>
 
-      <nav className="bg-white/80 backdrop-blur-2xl border-t border-emerald-100 p-5 pb-8 flex justify-around items-center z-[2000] sticky bottom-0 shadow-[0_-10px_30px_rgba(16,185,129,0.05)]">
-        <button onClick={() => setActiveTab('map')} className={`flex flex-col items-center gap-2 transition-all ${activeTab === 'map' ? 'text-emerald-600 scale-110' : 'text-slate-300'}`}>
-          <MapPin size={26} fill={activeTab === 'map' ? 'currentColor' : 'none'} strokeWidth={3}/>
-          <span className="text-[9px] font-black uppercase tracking-tighter">Map</span>
-        </button>
-        <button onClick={() => setActiveTab('list')} className={`flex flex-col items-center gap-2 transition-all ${activeTab === 'list' ? 'text-emerald-600 scale-110' : 'text-slate-300'}`}>
-          <List size={26} strokeWidth={3}/>
-          <span className="text-[9px] font-black uppercase tracking-tighter">Feed</span>
-        </button>
-        <button onClick={() => setActiveTab('stats')} className={`flex flex-col items-center gap-2 transition-all ${activeTab === 'stats' ? 'text-emerald-600 scale-110' : 'text-slate-300'}`}>
-          <BarChart3 size={26} strokeWidth={3}/>
-          <span className="text-[9px] font-black uppercase tracking-tighter">Stats</span>
-        </button>
+      <nav style={styles.navbar}>
+        <button onClick={() => setActiveTab('map')} style={{...styles.navBtn, color: activeTab === 'map' ? '#10b981' : '#cbd5e1'}}><MapPin size={26}/></button>
+        <button onClick={() => setActiveTab('list')} style={{...styles.navBtn, color: activeTab === 'list' ? '#10b981' : '#cbd5e1'}}><List size={26}/></button>
+        <button onClick={() => setActiveTab('stats')} style={{...styles.navBtn, color: activeTab === 'stats' ? '#10b981' : '#cbd5e1'}}><BarChart3 size={26}/></button>
       </nav>
-
-      <style>{`.leaflet-container { font-family: inherit; z-index: 1 !important; background: #f0fdf4; }.leaflet-popup-content-wrapper { border-radius: 28px; padding: 6px; box-shadow: 0 15px 35px rgba(16,185,129,0.15); border: 1px solid #f0fdf4; }.custom-pin { background: none; border: none; }::-webkit-scrollbar { width: 0px; background: transparent; }`}</style>
     </div>
   );
 }
+
+// [내장 스타일 정의 - 어떤 환경에서도 디자인이 깨지지 않음]
+const styles = {
+  mainContainer: {
+    height: '100vh', width: '100vw', backgroundColor: '#f0fdf4',
+    display: 'flex', flexDirection: 'column', alignItems: 'center',
+    paddingTop: '80px', padding: '24px', fontFamily: 'sans-serif'
+  },
+  logoSection: { textAlign: 'center', marginBottom: '64px' },
+  titleText: { fontSize: '52px', fontWeight: '900', color: '#2d3748', letterSpacing: '-0.04em', margin: 0 },
+  subTitleText: { color: '#10b981', fontWeight: '900', fontSize: '14px', letterSpacing: '0.5em', marginTop: '16px' },
+  card: {
+    backgroundColor: 'white', borderRadius: '60px', padding: '48px',
+    boxShadow: '0 20px 60px rgba(0,0,0,0.05)', width: '100%', maxWidth: '380px',
+    display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center'
+  },
+  cardHeading: { fontSize: '32px', fontWeight: '900', color: '#2d3748', marginBottom: '16px' },
+  cardSub: { color: '#94a3b8', fontSize: '16px', fontWeight: '500', marginBottom: '48px' },
+  form: { width: '100%' },
+  inputField: {
+    width: '100%', padding: '24px', borderRadius: '30px', backgroundColor: '#ecfdf5',
+    border: 'none', outline: 'none', fontWeight: 'bold', textAlign: 'center', fontSize: '20px',
+    color: '#065f46', marginBottom: '32px', boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.02)'
+  },
+  submitButton: {
+    width: '100%', backgroundColor: '#10b981', color: 'white', border: 'none',
+    fontWeight: '900', padding: '24px', borderRadius: '35px', fontSize: '22px',
+    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '12px', cursor: 'pointer'
+  },
+  footerText: { marginTop: 'auto', marginBottom: '32px', fontSize: '12px', fontWeight: 'bold', color: '#94a3b8', letterSpacing: '0.2em' },
+  
+  // 앱 내부 스타일
+  appRoot: { height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', fontFamily: 'sans-serif' },
+  header: { backgroundColor: 'rgba(255,255,255,0.8)', padding: '16px', display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #d1fae5', zIndex: 1000 },
+  headerIcon: { backgroundColor: '#059669', padding: '8px', borderRadius: '12px', color: 'white' },
+  headerTitle: { fontSize: '14px', fontWeight: '900', color: '#1f2937', textTransform: 'uppercase' },
+  headerUser: { fontSize: '11px', fontWeight: 'bold', color: '#059669', backgroundColor: '#d1fae5', padding: '6px 12px', borderRadius: '20px' },
+  mainContent: { flex: 1, position: 'relative' },
+  tabView: { position: 'absolute', inset: 0, transition: 'opacity 0.3s ease' },
+  floatingPanel: { position: 'absolute', bottom: '112px', left: '16px', right: '16px', zIndex: 1001 },
+  statsRow: { backgroundColor: 'white', padding: '20px', borderRadius: '36px', boxShadow: '0 20px 40px rgba(0,0,0,0.1)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
+  statLabel: { fontSize: '9px', fontWeight: '900', color: '#94a3b8', textTransform: 'uppercase', marginBottom: '4px' },
+  statValue: { fontSize: '24px', fontWeight: '900', color: '#1f2937', margin: 0 },
+  statDivider: { borderLeft: '1px solid #f1f5f9', paddingLeft: '24px' },
+  recordButton: { backgroundColor: '#1a202c', color: 'white', padding: '16px 24px', borderRadius: '24px', border: 'none', fontWeight: '900', fontSize: '14px', display: 'flex', gap: '8px', alignItems: 'center' },
+  formHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '40px' },
+  formTitle: { fontSize: '24px', fontWeight: '900', color: '#1f2937', fontStyle: 'italic', textTransform: 'uppercase' },
+  closeButton: { padding: '12px', backgroundColor: 'white', borderRadius: '16px', border: 'none', color: '#94a3b8' },
+  reportRow: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' },
+  gpsCard: { backgroundColor: '#1a202c', padding: '24px', borderRadius: '32px', color: 'white', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', minHeight: '140px' },
+  gpsLabel: { fontSize: '10px', fontWeight: '900', color: '#10b981', textTransform: 'uppercase', letterSpacing: '0.1em' },
+  gpsBtn: { padding: '12px', borderRadius: '16px', border: 'none', fontWeight: '900', fontSize: '10px' },
+  photoBox: { position: 'relative' },
+  photoLabel: { border: '2px dashed', borderRadius: '32px', height: '140px', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'white' },
+  previewImg: { width: '100%', height: '100%', objectFit: 'cover', borderRadius: '30px' },
+  categoryGrid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' },
+  catBtn: { padding: '16px', border: '2px solid', borderRadius: '24px', backgroundColor: 'white', display: 'flex', alignItems: 'center', gap: '16px' },
+  textArea: { width: '100%', padding: '24px', borderRadius: '32px', height: '144px', border: 'none', backgroundColor: 'white', fontSize: '14px', outline: 'none' },
+  saveButton: { width: '100%', padding: '24px', backgroundColor: '#10b981', color: 'white', borderRadius: '32px', border: 'none', fontWeight: '900', fontSize: '18px' },
+  feedCard: { backgroundColor: 'white', padding: '24px', borderRadius: '36px', marginBottom: '24px', boxShadow: '0 4px 6px rgba(0,0,0,0.02)' },
+  feedHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px' },
+  feedIconBox: { fontSize: '30px', padding: '8px', backgroundColor: '#f0fdf4', borderRadius: '16px' },
+  solvedBtn: { padding: '8px 16px', borderRadius: '16px', border: 'none', fontSize: '10px', fontWeight: '900' },
+  feedImg: { width: '100%', height: '192px', objectFit: 'cover', borderRadius: '28px', marginBottom: '16px' },
+  feedDesc: { fontSize: '14px', fontWeight: '500', color: '#4b5563', padding: '20px', backgroundColor: '#f0fdf4', borderRadius: '28px', borderLeft: '4px solid #10b981' },
+  feedFooter: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '16px', paddingTop: '16px', borderTop: '1px solid #f0fdf4', fontSize: '11px', fontWeight: 'bold' },
+  feedAreaBadge: { backgroundColor: 'white', color: '#10b981', padding: '6px 12px', borderRadius: '20px', border: '1px solid #d1fae5' },
+  navbar: { backgroundColor: 'rgba(255,255,255,0.8)', padding: '20px 20px 32px 20px', display: 'flex', justifyContent: 'space-around', borderTop: '1px solid #d1fae5' },
+  navBtn: { border: 'none', backgroundColor: 'transparent' }
+};
