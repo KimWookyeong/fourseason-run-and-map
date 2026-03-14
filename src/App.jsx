@@ -16,15 +16,13 @@ import {
   RefreshCw,
   TrendingUp,
   Camera,
-  Trash2,
-  Heart,
+  Image as ImageIcon,
   ChevronRight,
-  Leaf
+  Heart
 } from 'lucide-react';
 
 /**
- * [사계절 런앤맵 프로젝트 최종 보강본 - 스타일 내장형]
- * 디자인 도구 로딩 실패를 방지하기 위해 CSS 스타일을 직접 내장했습니다.
+ * [사계절 런앤맵 프로젝트 - 다중 이용자 연동 및 갤러리 업로드 보강본]
  */
 const firebaseConfig = {
   apiKey: "AIzaSyBYfwtdXjz4ekJbH83merNVPZemb_bc3NE",
@@ -37,7 +35,7 @@ const firebaseConfig = {
   databaseURL: "https://fourseason-run-and-map-default-rtdb.firebaseio.com/" 
 };
 
-// Firebase 초기화
+// 1. Firebase 초기화
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getDatabase(app);
@@ -59,8 +57,7 @@ export default function App() {
   const [isSettingNickname, setIsSettingNickname] = useState(!localStorage.getItem('team_nickname'));
   const [activeTab, setActiveTab] = useState('map');
   const [reports, setReports] = useState([]);
-  const [currentTime, setCurrentTime] = useState(new Date());
-  const [islocating, setIsLocating] = useState(false);
+  const [isLocating, setIsLocating] = useState(false);
   
   const mapContainerRef = useRef(null);
   const leafletMap = useRef(null);
@@ -76,7 +73,7 @@ export default function App() {
     image: null
   });
 
-  // 지도 라이브러리 로드
+  // 라이브러리 로드
   useEffect(() => {
     const link = document.createElement('link');
     link.rel = 'stylesheet';
@@ -104,38 +101,61 @@ export default function App() {
     }
   }, [isScriptLoaded, activeTab]);
 
-  // Firebase 인증
+  // 인증 및 데이터 수신 (멀티유저 동기화의 핵심)
   useEffect(() => {
     signInAnonymously(auth).catch(console.error);
-    const unsubscribe = onAuthStateChanged(auth, setUser);
-    return () => unsubscribe();
-  }, []);
+    const unsubscribeAuth = onAuthStateChanged(auth, setUser);
 
-  // 데이터 실시간 수신
-  useEffect(() => {
-    if (!user) return;
+    // 공통 저장소(reports)로부터 모든 이용자의 데이터를 실시간으로 가져옴
     const reportsRef = ref(db, 'reports');
-    const unsubscribe = onValue(reportsRef, (snapshot) => {
+    const unsubscribeData = onValue(reportsRef, (snapshot) => {
       const data = snapshot.val();
       if (data) {
+        // 객체 형태를 배열로 변환하여 최신순 정렬
         const formatted = Object.keys(data).map(key => ({ id: key, ...data[key] })).reverse();
         setReports(formatted);
         updateMarkers(formatted);
+      } else {
+        setReports([]);
       }
     });
-    return () => unsubscribe();
-  }, [user, isScriptLoaded]);
+
+    return () => {
+      unsubscribeAuth();
+      unsubscribeData();
+    };
+  }, []);
 
   const updateMarkers = (data) => {
     if (!window.L || !leafletMap.current) return;
     Object.values(markersRef.current).forEach(m => m.remove());
     markersRef.current = {};
+
     data.forEach(report => {
       const cat = TRASH_CATEGORIES.find(c => c.id === report.category) || TRASH_CATEGORIES[4];
-      const iconHtml = `<div style="background-color:${cat.color}; width:34px; height:34px; border-radius:12px; border:2px solid white; display:flex; align-items:center; justify-content:center; font-size:18px; box-shadow:0 4px 12px rgba(0,0,0,0.15); transform:rotate(45deg);"><div style="transform:rotate(-45deg)">${cat.icon}</div></div>`;
-      const icon = window.L.divIcon({ html: iconHtml, className: 'custom-pin', iconSize: [34, 34], iconAnchor: [17, 17] });
+      const isMine = report.userName === nickname;
+      
+      const iconHtml = `
+        <div style="background-color:${cat.color}; width:36px; height:36px; border-radius:12px; border:3px solid ${isMine ? '#000' : '#fff'}; display:flex; align-items:center; justify-content:center; font-size:20px; box-shadow:0 4px 15px rgba(0,0,0,0.2); transform:rotate(45deg);">
+          <div style="transform:rotate(-45deg)">${cat.icon}</div>
+        </div>
+      `;
+      
+      const icon = window.L.divIcon({ html: iconHtml, className: 'custom-pin', iconSize: [36, 36], iconAnchor: [18, 18] });
       const marker = window.L.marker([report.location.lat, report.location.lng], { icon }).addTo(leafletMap.current);
-      marker.bindPopup(`<b>${cat.label}</b><br/>by ${report.userName}`);
+      
+      marker.bindPopup(`
+        <div style="font-family:sans-serif; min-width:160px; padding:5px;">
+          <b style="color:${cat.color}; font-size:16px;">${cat.icon} ${cat.label}</b><br/>
+          <div style="margin-top:8px; font-size:12px; color:#4a5568;">
+            <b>작성자:</b> ${report.userName} ${isMine ? '(나)' : ''}<br/>
+            <b>위치:</b> ${report.area}
+          </div>
+          <p style="font-size:11px; color:#718096; margin-top:8px; border-top:1px solid #edf2f7; pt:5px;">
+            ${report.description || '내용 없음'}
+          </p>
+        </div>
+      `);
       markersRef.current[report.id] = marker;
     });
   };
@@ -164,58 +184,46 @@ export default function App() {
 
   const handleSave = async (e) => {
     e.preventDefault();
-    if (!user) return;
+    if (!nickname) return;
     const center = leafletMap.current ? leafletMap.current.getCenter() : { lat: GEUMJEONG_CENTER[0], lng: GEUMJEONG_CENTER[1] };
     const loc = formData.customLocation || { lat: center.lat, lng: center.lng };
-    await push(ref(db, 'reports'), { ...formData, location: loc, userName: nickname, discoveredTime: currentTime.toISOString() });
+    
+    // Firebase의 공통 저장소에 기록 추가 (다른 이용자에게 즉시 공유됨)
+    await push(ref(db, 'reports'), { 
+      ...formData, 
+      location: loc, 
+      userName: nickname, 
+      discoveredTime: new Date().toISOString() 
+    });
+    
     setFormData({ category: 'cup', area: GEUMJEONG_AREAS[0], description: '', status: 'pending', customLocation: null, image: null });
     setActiveTab('map');
   };
 
-  /**
-   * [메인 화면 - 연한 녹색 업그레이드 디자인]
-   * 외부 CSS 없이도 작동하도록 스타일을 객체로 직접 정의했습니다.
-   */
   if (isSettingNickname) {
     return (
       <div style={styles.mainContainer}>
-        {/* 상단 텍스트 로고 */}
         <div style={styles.logoSection}>
           <h1 style={styles.titleText}>FOUR SEASONS</h1>
-          <div style={styles.subTitleText}>
-            RUN & MAP GEUMJEONG
-          </div>
+          <div style={styles.subTitleText}>RUN & MAP GEUMJEONG</div>
         </div>
-
-        {/* 메인 입력 카드 */}
         <div style={styles.card}>
-          <h2 style={styles.cardHeading}>반가워요!</h2>
-          <p style={styles.cardSub}>활동을 위해 닉네임을 입력해 주세요.</p>
-          
+          <h2 style={styles.cardHeading}>반가워요 활동가님!</h2>
+          <p style={styles.cardSub}>함께 지도를 완성하기 위해<br/>닉네임을 입력해 주세요.</p>
           <form style={styles.form} onSubmit={(e) => { e.preventDefault(); if(nickname.trim()){ localStorage.setItem('team_nickname', nickname); setIsSettingNickname(false); } }}>
-            <div style={styles.inputWrapper}>
-              <input 
-                type="text" 
-                value={nickname} 
-                onChange={e => setNickname(e.target.value)} 
-                placeholder="예: 금정_철수" 
-                style={styles.inputField}
-                autoFocus 
-              />
-            </div>
-            <button style={styles.submitButton}>
-              기록 시작하기 <ChevronRight size={24} strokeWidth={3} />
-            </button>
+            <input 
+              type="text" value={nickname} onChange={e => setNickname(e.target.value)} placeholder="예: 금정_철수" 
+              style={styles.inputField} autoFocus 
+            />
+            <button style={styles.submitButton}>지도 합류하기 <ChevronRight size={24}/></button>
           </form>
         </div>
-        
-        <p style={styles.footerText}>© 2024 Four Seasons Team Project</p>
       </div>
     );
   }
 
   return (
-    <div style={{...styles.appRoot, backgroundColor: '#f0fdf4'}}>
+    <div style={styles.appRoot}>
       <header style={styles.header}>
         <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
           <div style={styles.headerIcon}><Navigation size={18} fill="currentColor"/></div>
@@ -230,8 +238,8 @@ export default function App() {
           <div ref={mapContainerRef} style={{width: '100%', height: '100%'}} />
           <div style={styles.floatingPanel}>
             <div style={styles.statsRow}>
-               <div style={{display: 'flex', gap: '24px', paddingLeft: '16px'}}>
-                 <div style={{textAlign: 'center'}}><p style={styles.statLabel}>Trash</p><p style={styles.statValue}>{reports.length}</p></div>
+               <div style={{display: 'flex', gap: '20px', paddingLeft: '10px'}}>
+                 <div style={{textAlign: 'center'}}><p style={styles.statLabel}>Total</p><p style={styles.statValue}>{reports.length}</p></div>
                  <div style={styles.statDivider}><p style={styles.statLabel}>Solved</p><p style={{...styles.statValue, color: '#10b981'}}>{reports.filter(r => r.status === 'solved').length}</p></div>
                </div>
                <button onClick={() => setActiveTab('add')} style={styles.recordButton}>
@@ -241,63 +249,80 @@ export default function App() {
           </div>
         </div>
 
-        {/* 탭 2: 기록 추가 */}
-        <div style={{...styles.tabView, backgroundColor: '#f0fdf4', padding: '24px', overflowY: 'auto', transform: activeTab === 'add' ? 'translateY(0)' : 'translateY(100%)', transition: 'transform 0.5s ease', zIndex: 50}}>
+        {/* 탭 2: 기록 추가 (카메라/갤러리 선택 가능) */}
+        <div style={{...styles.tabView, backgroundColor: '#f0fdf4', padding: '24px', overflowY: 'auto', transform: activeTab === 'add' ? 'translateY(0)' : 'translateY(100%)', transition: 'transform 0.4s ease', zIndex: 50}}>
           <div style={{maxWidth: '400px', margin: '0 auto'}}>
             <div style={styles.formHeader}>
-              <h2 style={styles.formTitle}>New Report</h2>
+              <h2 style={styles.formTitle}>New Archive</h2>
               <button onClick={() => setActiveTab('map')} style={styles.closeButton}><X/></button>
             </div>
-            <form onSubmit={handleSave} style={{display: 'flex', flexDirection: 'column', gap: '24px'}}>
+            <form onSubmit={handleSave} style={{display: 'flex', flexDirection: 'column', gap: '20px'}}>
               <div style={styles.reportRow}>
                 <div style={styles.gpsCard}>
-                  <span style={styles.gpsLabel}><MapPin size={14}/> Location</span>
+                  <span style={styles.gpsLabel}><MapPin size={14}/> GPS 위치</span>
                   <button type="button" onClick={getGPS} style={{...styles.gpsBtn, backgroundColor: formData.customLocation ? '#10b981' : 'white', color: formData.customLocation ? 'white' : '#1a202c'}}>
-                    {islocating ? "..." : "위치 잡기"}
+                    {isLocating ? "수신 중..." : formData.customLocation ? "위치 획득 완료" : "내 위치 잡기"}
                   </button>
                 </div>
                 <div style={styles.photoBox}>
-                  <input type="file" accept="image/*" capture="environment" onChange={handleImageChange} style={{display: 'none'}} id="cam" />
-                  <label htmlFor="cam" style={{...styles.photoLabel, borderColor: formData.image ? '#10b981' : '#a7f3d0'}}>
-                    {formData.image ? <img src={formData.image} style={styles.previewImg} /> : <Camera size={24} color="#10b981"/>}
+                  {/* capture 속성을 제거하여 갤러리/카메라 선택권을 부여함 */}
+                  <input type="file" accept="image/*" onChange={handleImageChange} style={{display: 'none'}} id="photo-upload" />
+                  <label htmlFor="photo-upload" style={{...styles.photoLabel, borderColor: formData.image ? '#10b981' : '#a7f3d0'}}>
+                    {formData.image ? <img src={formData.image} style={styles.previewImg} /> : (
+                      <div style={{textAlign: 'center'}}>
+                        <Camera size={24} color="#10b981" style={{marginBottom: '4px'}}/>
+                        <div style={{fontSize: '10px', color: '#059669', fontWeight: '900'}}>사진 추가</div>
+                      </div>
+                    )}
                   </label>
                 </div>
               </div>
+
               <div style={styles.categoryGrid}>
                 {TRASH_CATEGORIES.map(c => (
-                  <button key={c.id} type="button" onClick={() => setFormData({...formData, category: c.id})} style={{...styles.catBtn, borderColor: formData.category === c.id ? '#10b981' : 'transparent', color: formData.category === c.id ? '#065f46' : '#94a3b8'}}>
-                    <span style={{fontSize: '24px'}}>{c.icon}</span><span style={{fontSize: '12px', fontWeight: '900'}}>{c.label}</span>
+                  <button key={c.id} type="button" onClick={() => setFormData({...formData, category: c.id})} style={{...styles.catBtn, borderColor: formData.category === c.id ? '#10b981' : 'transparent', backgroundColor: formData.category === c.id ? 'white' : 'rgba(255,255,255,0.4)'}}>
+                    <span style={{fontSize: '22px'}}>{c.icon}</span>
+                    <span style={{fontSize: '11px', fontWeight: '900', color: formData.category === c.id ? '#065f46' : '#94a3b8'}}>{c.label}</span>
                   </button>
                 ))}
               </div>
-              <textarea value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})} placeholder="어떤 상황인가요?" style={styles.textArea} />
-              <button style={styles.saveButton}>기록 업로드</button>
+
+              <select value={formData.area} onChange={e => setFormData({...formData, area: e.target.value})} style={styles.selectInput}>
+                {GEUMJEONG_AREAS.map(a => <option key={a}>{a}</option>)}
+              </select>
+
+              <textarea value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})} placeholder="어떤 상황인가요? (예: 일회용 컵 5개 방치됨)" style={styles.textArea} />
+              
+              <button style={styles.saveButton}>지도로 공유하기</button>
             </form>
           </div>
         </div>
 
-        {/* 탭 3: 활동 피드 */}
-        <div style={{...styles.tabView, backgroundColor: '#f0fdf4', padding: '24px', overflowY: 'auto', transform: activeTab === 'list' ? 'translateX(0)' : 'translateX(100%)', transition: 'transform 0.5s ease', zIndex: 20}}>
+        {/* 탭 3: 팀 아카이브 피드 */}
+        <div style={{...styles.tabView, backgroundColor: '#f0fdf4', padding: '24px', overflowY: 'auto', transform: activeTab === 'list' ? 'translateX(0)' : 'translateX(100%)', transition: 'transform 0.4s ease', zIndex: 20}}>
           <div style={{maxWidth: '400px', margin: '0 auto'}}>
-            <h2 style={styles.formTitle}>Team Feed</h2>
-            {reports.map(r => (
+            <h2 style={styles.formTitle}>Team Archive</h2>
+            <p style={{fontSize: '12px', color: '#94a3b8', marginBottom: '20px', fontWeight: 'bold'}}>우리 팀원들이 함께 모은 기록입니다.</p>
+            {reports.length === 0 ? (
+              <div style={{textAlign: 'center', padding: '50px 0', color: '#cbd5e1'}}>아직 기록이 없습니다.</div>
+            ) : reports.map(r => (
               <div key={r.id} style={styles.feedCard}>
                 <div style={styles.feedHeader}>
-                  <div style={{display: 'flex', alignItems: 'center', gap: '12px'}}>
+                  <div style={{display: 'flex', alignItems: 'center', gap: '10px'}}>
                     <span style={styles.feedIconBox}>{TRASH_CATEGORIES.find(c => c.id === r.category)?.icon}</span>
                     <div>
-                      <h4 style={{fontSize: '14px', fontWeight: '900'}}>{TRASH_CATEGORIES.find(c => c.id === r.category)?.label}</h4>
-                      <p style={{fontSize: '9px', fontWeight: 'bold', color: '#94a3b8'}}>{new Date(r.discoveredTime).toLocaleString()}</p>
+                      <h4 style={{fontSize: '14px', fontWeight: '900', margin: 0}}>{TRASH_CATEGORIES.find(c => c.id === r.category)?.label}</h4>
+                      <p style={{fontSize: '10px', color: '#94a3b8', margin: 0}}>{new Date(r.discoveredTime).toLocaleString()}</p>
                     </div>
                   </div>
                   <button onClick={() => set(ref(db, `reports/${r.id}/status`), r.status === 'pending' ? 'solved' : 'pending')} style={{...styles.solvedBtn, backgroundColor: r.status === 'solved' ? '#10b981' : '#f1f5f9', color: r.status === 'solved' ? 'white' : '#94a3b8'}}>
-                    {r.status === 'solved' ? '해결됨' : '해결하기'}
+                    {r.status === 'solved' ? '해결됨' : '진행중'}
                   </button>
                 </div>
                 {r.image && <img src={r.image} style={styles.feedImg} />}
-                <p style={styles.feedDesc}>{r.description || "설명 없음"}</p>
+                <p style={styles.feedDesc}>{r.description || "상세 설명이 없습니다."}</p>
                 <div style={styles.feedFooter}>
-                  <span>👤 {r.userName} 활동가</span>
+                  <span style={{color: r.userName === nickname ? '#10b981' : '#4b5563'}}>👤 {r.userName} {r.userName === nickname ? '(나)' : ''}</span>
                   <span style={styles.feedAreaBadge}>{r.area}</span>
                 </div>
               </div>
@@ -307,80 +332,84 @@ export default function App() {
       </main>
 
       <nav style={styles.navbar}>
-        <button onClick={() => setActiveTab('map')} style={{...styles.navBtn, color: activeTab === 'map' ? '#10b981' : '#cbd5e1'}}><MapPin size={26}/></button>
+        <button onClick={() => setActiveTab('map')} style={{...styles.navBtn, color: activeTab === 'map' ? '#10b981' : '#cbd5e1'}}><MapPin size={26} fill={activeTab === 'map' ? '#10b981' : 'none'}/></button>
         <button onClick={() => setActiveTab('list')} style={{...styles.navBtn, color: activeTab === 'list' ? '#10b981' : '#cbd5e1'}}><List size={26}/></button>
         <button onClick={() => setActiveTab('stats')} style={{...styles.navBtn, color: activeTab === 'stats' ? '#10b981' : '#cbd5e1'}}><BarChart3 size={26}/></button>
       </nav>
+
+      <style>{`
+        .leaflet-container { font-family: inherit; z-index: 1 !important; background: #f0fdf4; }
+        .leaflet-popup-content-wrapper { border-radius: 20px; padding: 5px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); }
+        .custom-pin { background: none; border: none; }
+        ::-webkit-scrollbar { width: 0px; background: transparent; }
+      `}</style>
     </div>
   );
 }
 
-// [내장 스타일 정의 - 어떤 환경에서도 디자인이 깨지지 않음]
 const styles = {
   mainContainer: {
     height: '100vh', width: '100vw', backgroundColor: '#f0fdf4',
     display: 'flex', flexDirection: 'column', alignItems: 'center',
-    paddingTop: '80px', padding: '24px', fontFamily: 'sans-serif'
+    paddingTop: '10vh', padding: '24px', fontFamily: 'sans-serif'
   },
-  logoSection: { textAlign: 'center', marginBottom: '64px' },
-  titleText: { fontSize: '52px', fontWeight: '900', color: '#2d3748', letterSpacing: '-0.04em', margin: 0 },
-  subTitleText: { color: '#10b981', fontWeight: '900', fontSize: '14px', letterSpacing: '0.5em', marginTop: '16px' },
+  logoSection: { textAlign: 'center', marginBottom: '50px' },
+  titleText: { fontSize: '42px', fontWeight: '900', color: '#2d3748', letterSpacing: '-0.05em', margin: 0 },
+  subTitleText: { color: '#10b981', fontWeight: '900', fontSize: '12px', letterSpacing: '0.4em', marginTop: '10px' },
   card: {
-    backgroundColor: 'white', borderRadius: '60px', padding: '48px',
-    boxShadow: '0 20px 60px rgba(0,0,0,0.05)', width: '100%', maxWidth: '380px',
+    backgroundColor: 'white', borderRadius: '50px', padding: '40px',
+    boxShadow: '0 20px 50px rgba(0,0,0,0.06)', width: '100%', maxWidth: '360px',
     display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center'
   },
-  cardHeading: { fontSize: '32px', fontWeight: '900', color: '#2d3748', marginBottom: '16px' },
-  cardSub: { color: '#94a3b8', fontSize: '16px', fontWeight: '500', marginBottom: '48px' },
+  cardHeading: { fontSize: '24px', fontWeight: '900', color: '#2d3748', marginBottom: '12px' },
+  cardSub: { color: '#94a3b8', fontSize: '14px', fontWeight: '500', marginBottom: '35px', lineHeight: '1.5' },
   form: { width: '100%' },
   inputField: {
-    width: '100%', padding: '24px', borderRadius: '30px', backgroundColor: '#ecfdf5',
-    border: 'none', outline: 'none', fontWeight: 'bold', textAlign: 'center', fontSize: '20px',
-    color: '#065f46', marginBottom: '32px', boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.02)'
+    width: '100%', padding: '20px', borderRadius: '25px', backgroundColor: '#ecfdf5',
+    border: 'none', outline: 'none', fontWeight: 'bold', textAlign: 'center', fontSize: '18px',
+    color: '#065f46', marginBottom: '25px'
   },
   submitButton: {
     width: '100%', backgroundColor: '#10b981', color: 'white', border: 'none',
-    fontWeight: '900', padding: '24px', borderRadius: '35px', fontSize: '22px',
-    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '12px', cursor: 'pointer'
+    fontWeight: '900', padding: '20px', borderRadius: '25px', fontSize: '18px',
+    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px'
   },
-  footerText: { marginTop: 'auto', marginBottom: '32px', fontSize: '12px', fontWeight: 'bold', color: '#94a3b8', letterSpacing: '0.2em' },
-  
-  // 앱 내부 스타일
-  appRoot: { height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', fontFamily: 'sans-serif' },
-  header: { backgroundColor: 'rgba(255,255,255,0.8)', padding: '16px', display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #d1fae5', zIndex: 1000 },
-  headerIcon: { backgroundColor: '#059669', padding: '8px', borderRadius: '12px', color: 'white' },
-  headerTitle: { fontSize: '14px', fontWeight: '900', color: '#1f2937', textTransform: 'uppercase' },
-  headerUser: { fontSize: '11px', fontWeight: 'bold', color: '#059669', backgroundColor: '#d1fae5', padding: '6px 12px', borderRadius: '20px' },
+  appRoot: { height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', fontFamily: 'sans-serif', backgroundColor: '#f0fdf4' },
+  header: { backgroundColor: 'rgba(255,255,255,0.9)', padding: '12px 20px', display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #d1fae5', zIndex: 1000 },
+  headerIcon: { backgroundColor: '#10b981', padding: '6px', borderRadius: '10px', color: 'white' },
+  headerTitle: { fontSize: '14px', fontWeight: '900', color: '#1f2937', margin: 0 },
+  headerUser: { fontSize: '11px', fontWeight: 'bold', color: '#059669', backgroundColor: '#d1fae5', padding: '5px 12px', borderRadius: '20px' },
   mainContent: { flex: 1, position: 'relative' },
-  tabView: { position: 'absolute', inset: 0, transition: 'opacity 0.3s ease' },
-  floatingPanel: { position: 'absolute', bottom: '112px', left: '16px', right: '16px', zIndex: 1001 },
-  statsRow: { backgroundColor: 'white', padding: '20px', borderRadius: '36px', boxShadow: '0 20px 40px rgba(0,0,0,0.1)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
-  statLabel: { fontSize: '9px', fontWeight: '900', color: '#94a3b8', textTransform: 'uppercase', marginBottom: '4px' },
-  statValue: { fontSize: '24px', fontWeight: '900', color: '#1f2937', margin: 0 },
-  statDivider: { borderLeft: '1px solid #f1f5f9', paddingLeft: '24px' },
-  recordButton: { backgroundColor: '#1a202c', color: 'white', padding: '16px 24px', borderRadius: '24px', border: 'none', fontWeight: '900', fontSize: '14px', display: 'flex', gap: '8px', alignItems: 'center' },
-  formHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '40px' },
-  formTitle: { fontSize: '24px', fontWeight: '900', color: '#1f2937', fontStyle: 'italic', textTransform: 'uppercase' },
-  closeButton: { padding: '12px', backgroundColor: 'white', borderRadius: '16px', border: 'none', color: '#94a3b8' },
-  reportRow: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' },
-  gpsCard: { backgroundColor: '#1a202c', padding: '24px', borderRadius: '32px', color: 'white', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', minHeight: '140px' },
-  gpsLabel: { fontSize: '10px', fontWeight: '900', color: '#10b981', textTransform: 'uppercase', letterSpacing: '0.1em' },
-  gpsBtn: { padding: '12px', borderRadius: '16px', border: 'none', fontWeight: '900', fontSize: '10px' },
+  tabView: { position: 'absolute', inset: 0, transition: 'all 0.4s ease' },
+  floatingPanel: { position: 'absolute', bottom: '110px', left: '16px', right: '16px', zIndex: 1001 },
+  statsRow: { backgroundColor: 'white', padding: '15px', borderRadius: '30px', boxShadow: '0 15px 35px rgba(0,0,0,0.1)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
+  statLabel: { fontSize: '8px', fontWeight: '900', color: '#94a3b8', textTransform: 'uppercase', marginBottom: '2px' },
+  statValue: { fontSize: '20px', fontWeight: '900', color: '#1f2937', margin: 0 },
+  statDivider: { borderLeft: '1px solid #f1f5f9', paddingLeft: '20px' },
+  recordButton: { backgroundColor: '#1a202c', color: 'white', padding: '14px 20px', borderRadius: '22px', border: 'none', fontWeight: '900', fontSize: '13px', display: 'flex', gap: '6px', alignItems: 'center' },
+  formHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '30px' },
+  formTitle: { fontSize: '22px', fontWeight: '900', color: '#1f2937', textTransform: 'uppercase', margin: 0 },
+  closeButton: { padding: '10px', backgroundColor: 'white', borderRadius: '14px', border: 'none', color: '#94a3b8' },
+  reportRow: { display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '12px' },
+  gpsCard: { backgroundColor: '#1a202c', padding: '20px', borderRadius: '28px', color: 'white', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', minHeight: '130px' },
+  gpsLabel: { fontSize: '10px', fontWeight: '900', color: '#10b981' },
+  gpsBtn: { padding: '10px', borderRadius: '15px', border: 'none', fontWeight: '900', fontSize: '11px' },
   photoBox: { position: 'relative' },
-  photoLabel: { border: '2px dashed', borderRadius: '32px', height: '140px', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'white' },
-  previewImg: { width: '100%', height: '100%', objectFit: 'cover', borderRadius: '30px' },
-  categoryGrid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' },
-  catBtn: { padding: '16px', border: '2px solid', borderRadius: '24px', backgroundColor: 'white', display: 'flex', alignItems: 'center', gap: '16px' },
-  textArea: { width: '100%', padding: '24px', borderRadius: '32px', height: '144px', border: 'none', backgroundColor: 'white', fontSize: '14px', outline: 'none' },
-  saveButton: { width: '100%', padding: '24px', backgroundColor: '#10b981', color: 'white', borderRadius: '32px', border: 'none', fontWeight: '900', fontSize: '18px' },
-  feedCard: { backgroundColor: 'white', padding: '24px', borderRadius: '36px', marginBottom: '24px', boxShadow: '0 4px 6px rgba(0,0,0,0.02)' },
-  feedHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px' },
-  feedIconBox: { fontSize: '30px', padding: '8px', backgroundColor: '#f0fdf4', borderRadius: '16px' },
-  solvedBtn: { padding: '8px 16px', borderRadius: '16px', border: 'none', fontSize: '10px', fontWeight: '900' },
-  feedImg: { width: '100%', height: '192px', objectFit: 'cover', borderRadius: '28px', marginBottom: '16px' },
-  feedDesc: { fontSize: '14px', fontWeight: '500', color: '#4b5563', padding: '20px', backgroundColor: '#f0fdf4', borderRadius: '28px', borderLeft: '4px solid #10b981' },
-  feedFooter: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '16px', paddingTop: '16px', borderTop: '1px solid #f0fdf4', fontSize: '11px', fontWeight: 'bold' },
-  feedAreaBadge: { backgroundColor: 'white', color: '#10b981', padding: '6px 12px', borderRadius: '20px', border: '1px solid #d1fae5' },
-  navbar: { backgroundColor: 'rgba(255,255,255,0.8)', padding: '20px 20px 32px 20px', display: 'flex', justifyContent: 'space-around', borderTop: '1px solid #d1fae5' },
-  navBtn: { border: 'none', backgroundColor: 'transparent' }
+  photoLabel: { border: '2px dashed', borderRadius: '28px', height: '130px', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'white', cursor: 'pointer' },
+  previewImg: { width: '100%', height: '100%', objectFit: 'cover', borderRadius: '26px' },
+  categoryGrid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' },
+  catBtn: { padding: '12px', border: '2px solid', borderRadius: '22px', display: 'flex', alignItems: 'center', gap: '12px', cursor: 'pointer' },
+  selectInput: { width: '100%', padding: '16px', borderRadius: '20px', border: 'none', backgroundColor: 'white', fontSize: '13px', fontWeight: 'bold', color: '#1f2937' },
+  textArea: { width: '100%', padding: '20px', borderRadius: '28px', height: '120px', border: 'none', backgroundColor: 'white', fontSize: '14px', outline: 'none', resize: 'none' },
+  saveButton: { width: '100%', padding: '20px', backgroundColor: '#10b981', color: 'white', borderRadius: '25px', border: 'none', fontWeight: '900', fontSize: '18px' },
+  feedCard: { backgroundColor: 'white', padding: '20px', borderRadius: '32px', marginBottom: '20px', boxShadow: '0 4px 10px rgba(0,0,0,0.03)' },
+  feedHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' },
+  feedIconBox: { fontSize: '26px', padding: '6px', backgroundColor: '#f0fdf4', borderRadius: '14px' },
+  solvedBtn: { padding: '6px 14px', borderRadius: '14px', border: 'none', fontSize: '10px', fontWeight: '900' },
+  feedImg: { width: '100%', height: '180px', objectFit: 'cover', borderRadius: '24px', marginBottom: '14px' },
+  feedDesc: { fontSize: '13px', fontWeight: '500', color: '#4b5563', padding: '15px', backgroundColor: '#f0fdf4', borderRadius: '22px', borderLeft: '4px solid #10b981' },
+  feedFooter: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '14px', paddingTop: '14px', borderTop: '1px solid #f0fdf4', fontSize: '11px', fontWeight: 'bold' },
+  feedAreaBadge: { backgroundColor: 'white', color: '#10b981', padding: '4px 10px', borderRadius: '15px', border: '1px solid #d1fae5' },
+  navbar: { backgroundColor: 'rgba(255,255,255,0.9)', padding: '15px 20px 30px 20px', display: 'flex', justifyContent: 'space-around', borderTop: '1px solid #d1fae5' },
+  navBtn: { border: 'none', backgroundColor: 'transparent', padding: '10px' }
 };
