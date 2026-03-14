@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { initializeApp } from 'firebase/app';
-import { getDatabase, ref, push, onValue, set } from 'firebase/database';
+import { getDatabase, ref, push, onValue, set, remove } from 'firebase/database';
 import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
 import { 
   MapPin, 
@@ -18,11 +18,12 @@ import {
   Camera,
   Image as ImageIcon,
   ChevronRight,
-  Heart
+  Heart,
+  Trash2
 } from 'lucide-react';
 
 /**
- * [사계절 런앤맵 프로젝트 - 다중 이용자 연동 및 갤러리 업로드 보강본]
+ * [사계절 런앤맵 프로젝트 - 기록 삭제 기능 및 UI 보강본]
  */
 const firebaseConfig = {
   apiKey: "AIzaSyBYfwtdXjz4ekJbH83merNVPZemb_bc3NE",
@@ -35,7 +36,6 @@ const firebaseConfig = {
   databaseURL: "https://fourseason-run-and-map-default-rtdb.firebaseio.com/" 
 };
 
-// 1. Firebase 초기화
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getDatabase(app);
@@ -58,6 +58,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('map');
   const [reports, setReports] = useState([]);
   const [isLocating, setIsLocating] = useState(false);
+  const [showDeleteModal, setShowDeleteModal] = useState(null); // 삭제 확인용 모달 상태
   
   const mapContainerRef = useRef(null);
   const leafletMap = useRef(null);
@@ -73,7 +74,6 @@ export default function App() {
     image: null
   });
 
-  // 라이브러리 로드
   useEffect(() => {
     const link = document.createElement('link');
     link.rel = 'stylesheet';
@@ -89,7 +89,6 @@ export default function App() {
     return () => { if (leafletMap.current) leafletMap.current.remove(); };
   }, []);
 
-  // 지도 초기화
   useEffect(() => {
     if (isScriptLoaded && activeTab === 'map' && mapContainerRef.current && !leafletMap.current) {
       setTimeout(() => {
@@ -101,22 +100,23 @@ export default function App() {
     }
   }, [isScriptLoaded, activeTab]);
 
-  // 인증 및 데이터 수신 (멀티유저 동기화의 핵심)
   useEffect(() => {
     signInAnonymously(auth).catch(console.error);
     const unsubscribeAuth = onAuthStateChanged(auth, setUser);
 
-    // 공통 저장소(reports)로부터 모든 이용자의 데이터를 실시간으로 가져옴
     const reportsRef = ref(db, 'reports');
     const unsubscribeData = onValue(reportsRef, (snapshot) => {
       const data = snapshot.val();
       if (data) {
-        // 객체 형태를 배열로 변환하여 최신순 정렬
         const formatted = Object.keys(data).map(key => ({ id: key, ...data[key] })).reverse();
         setReports(formatted);
         updateMarkers(formatted);
       } else {
         setReports([]);
+        if (leafletMap.current) {
+          Object.values(markersRef.current).forEach(m => m.remove());
+          markersRef.current = {};
+        }
       }
     });
 
@@ -124,7 +124,7 @@ export default function App() {
       unsubscribeAuth();
       unsubscribeData();
     };
-  }, []);
+  }, [nickname]);
 
   const updateMarkers = (data) => {
     if (!window.L || !leafletMap.current) return;
@@ -151,7 +151,7 @@ export default function App() {
             <b>작성자:</b> ${report.userName} ${isMine ? '(나)' : ''}<br/>
             <b>위치:</b> ${report.area}
           </div>
-          <p style="font-size:11px; color:#718096; margin-top:8px; border-top:1px solid #edf2f7; pt:5px;">
+          <p style="font-size:11px; color:#718096; margin-top:8px; border-top:1px solid #edf2f7; padding-top:5px;">
             ${report.description || '내용 없음'}
           </p>
         </div>
@@ -188,7 +188,6 @@ export default function App() {
     const center = leafletMap.current ? leafletMap.current.getCenter() : { lat: GEUMJEONG_CENTER[0], lng: GEUMJEONG_CENTER[1] };
     const loc = formData.customLocation || { lat: center.lat, lng: center.lng };
     
-    // Firebase의 공통 저장소에 기록 추가 (다른 이용자에게 즉시 공유됨)
     await push(ref(db, 'reports'), { 
       ...formData, 
       location: loc, 
@@ -198,6 +197,11 @@ export default function App() {
     
     setFormData({ category: 'cup', area: GEUMJEONG_AREAS[0], description: '', status: 'pending', customLocation: null, image: null });
     setActiveTab('map');
+  };
+
+  const handleDelete = (id) => {
+    remove(ref(db, `reports/${id}`));
+    setShowDeleteModal(null);
   };
 
   if (isSettingNickname) {
@@ -249,7 +253,7 @@ export default function App() {
           </div>
         </div>
 
-        {/* 탭 2: 기록 추가 (카메라/갤러리 선택 가능) */}
+        {/* 탭 2: 기록 추가 */}
         <div style={{...styles.tabView, backgroundColor: '#f0fdf4', padding: '24px', overflowY: 'auto', transform: activeTab === 'add' ? 'translateY(0)' : 'translateY(100%)', transition: 'transform 0.4s ease', zIndex: 50}}>
           <div style={{maxWidth: '400px', margin: '0 auto'}}>
             <div style={styles.formHeader}>
@@ -265,7 +269,6 @@ export default function App() {
                   </button>
                 </div>
                 <div style={styles.photoBox}>
-                  {/* capture 속성을 제거하여 갤러리/카메라 선택권을 부여함 */}
                   <input type="file" accept="image/*" onChange={handleImageChange} style={{display: 'none'}} id="photo-upload" />
                   <label htmlFor="photo-upload" style={{...styles.photoLabel, borderColor: formData.image ? '#10b981' : '#a7f3d0'}}>
                     {formData.image ? <img src={formData.image} style={styles.previewImg} /> : (
@@ -302,7 +305,7 @@ export default function App() {
         <div style={{...styles.tabView, backgroundColor: '#f0fdf4', padding: '24px', overflowY: 'auto', transform: activeTab === 'list' ? 'translateX(0)' : 'translateX(100%)', transition: 'transform 0.4s ease', zIndex: 20}}>
           <div style={{maxWidth: '400px', margin: '0 auto'}}>
             <h2 style={styles.formTitle}>Team Archive</h2>
-            <p style={{fontSize: '12px', color: '#94a3b8', marginBottom: '20px', fontWeight: 'bold'}}>우리 팀원들이 함께 모은 기록입니다.</p>
+            <p style={{fontSize: '12px', color: '#94a3b8', marginBottom: '20px', fontWeight: 'bold'}}>팀원들과 함께 모은 사진과 기록입니다.</p>
             {reports.length === 0 ? (
               <div style={{textAlign: 'center', padding: '50px 0', color: '#cbd5e1'}}>아직 기록이 없습니다.</div>
             ) : reports.map(r => (
@@ -319,17 +322,40 @@ export default function App() {
                     {r.status === 'solved' ? '해결됨' : '진행중'}
                   </button>
                 </div>
-                {r.image && <img src={r.image} style={styles.feedImg} />}
+                {r.image && <img src={r.image} style={styles.feedImg} alt="현장 사진" />}
                 <p style={styles.feedDesc}>{r.description || "상세 설명이 없습니다."}</p>
                 <div style={styles.feedFooter}>
                   <span style={{color: r.userName === nickname ? '#10b981' : '#4b5563'}}>👤 {r.userName} {r.userName === nickname ? '(나)' : ''}</span>
-                  <span style={styles.feedAreaBadge}>{r.area}</span>
+                  <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
+                    <span style={styles.feedAreaBadge}>{r.area}</span>
+                    {r.userName === nickname && (
+                      <button 
+                        onClick={() => setShowDeleteModal(r.id)} 
+                        style={{border: 'none', background: 'none', color: '#ef4444', padding: '4px', cursor: 'pointer'}}
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
             ))}
           </div>
         </div>
       </main>
+
+      {/* 삭제 확인 모달 UI */}
+      {showDeleteModal && (
+        <div style={styles.modalOverlay}>
+          <div style={styles.modalContent}>
+            <p style={{fontWeight: '900', marginBottom: '20px'}}>이 기록을 정말 삭제할까요?</p>
+            <div style={{display: 'flex', gap: '10px', width: '100%'}}>
+              <button onClick={() => setShowDeleteModal(null)} style={{...styles.modalBtn, backgroundColor: '#f1f5f9', color: '#64748b'}}>취소</button>
+              <button onClick={() => handleDelete(showDeleteModal)} style={{...styles.modalBtn, backgroundColor: '#ef4444', color: 'white'}}>삭제</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <nav style={styles.navbar}>
         <button onClick={() => setActiveTab('map')} style={{...styles.navBtn, color: activeTab === 'map' ? '#10b981' : '#cbd5e1'}}><MapPin size={26} fill={activeTab === 'map' ? '#10b981' : 'none'}/></button>
@@ -411,5 +437,8 @@ const styles = {
   feedFooter: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '14px', paddingTop: '14px', borderTop: '1px solid #f0fdf4', fontSize: '11px', fontWeight: 'bold' },
   feedAreaBadge: { backgroundColor: 'white', color: '#10b981', padding: '4px 10px', borderRadius: '15px', border: '1px solid #d1fae5' },
   navbar: { backgroundColor: 'rgba(255,255,255,0.9)', padding: '15px 20px 30px 20px', display: 'flex', justifyContent: 'space-around', borderTop: '1px solid #d1fae5' },
-  navBtn: { border: 'none', backgroundColor: 'transparent', padding: '10px' }
+  navBtn: { border: 'none', backgroundColor: 'transparent', padding: '10px' },
+  modalOverlay: { position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 3000, padding: '20px' },
+  modalContent: { backgroundColor: 'white', padding: '30px', borderRadius: '30px', width: '100%', maxWidth: '300px', textAlign: 'center' },
+  modalBtn: { flex: 1, padding: '12px', borderRadius: '15px', border: 'none', fontWeight: '900', cursor: 'pointer' }
 };
