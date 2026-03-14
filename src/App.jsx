@@ -19,11 +19,16 @@ import {
   Image as ImageIcon,
   ChevronRight,
   Heart,
-  Trash2
+  Trash2,
+  Award,
+  CheckCircle2
 } from 'lucide-react';
 
 /**
- * [사계절 런앤맵 프로젝트 - 기록 삭제 기능 및 UI 보강본]
+ * [사계절 런앤맵 프로젝트 - 아카이브 풀스크린 및 통계 보강본]
+ * - 모든 탭(아카이브, 통계, 기록)을 풀스크린 레이아웃으로 변경
+ * - 통계 탭에 실시간 데이터 요약 및 지도 복귀(X) 버튼 추가
+ * - 아카이브(피드) 가독성 극대화
  */
 const firebaseConfig = {
   apiKey: "AIzaSyBYfwtdXjz4ekJbH83merNVPZemb_bc3NE",
@@ -58,7 +63,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('map');
   const [reports, setReports] = useState([]);
   const [isLocating, setIsLocating] = useState(false);
-  const [showDeleteModal, setShowDeleteModal] = useState(null); // 삭제 확인용 모달 상태
+  const [showDeleteModal, setShowDeleteModal] = useState(null);
   
   const mapContainerRef = useRef(null);
   const leafletMap = useRef(null);
@@ -226,6 +231,11 @@ export default function App() {
     );
   }
 
+  // 통계 계산 로직
+  const totalReports = reports.length;
+  const solvedReports = reports.filter(r => r.status === 'solved').length;
+  const solvedRate = totalReports > 0 ? Math.round((solvedReports / totalReports) * 100) : 0;
+
   return (
     <div style={styles.appRoot}>
       <header style={styles.header}>
@@ -237,7 +247,7 @@ export default function App() {
       </header>
 
       <main style={styles.mainContent}>
-        {/* 탭 1: 지도 */}
+        {/* 탭 1: 지도 (홈 화면) */}
         <div style={{...styles.tabView, opacity: activeTab === 'map' ? 1 : 0, zIndex: activeTab === 'map' ? 10 : 0}}>
           <div ref={mapContainerRef} style={{width: '100%', height: '100%'}} />
           <div style={styles.floatingPanel}>
@@ -253,11 +263,11 @@ export default function App() {
           </div>
         </div>
 
-        {/* 탭 2: 기록 추가 */}
+        {/* 탭 2: 기록 추가 (풀스크린) */}
         <div style={{...styles.tabView, backgroundColor: '#f0fdf4', padding: '24px', overflowY: 'auto', transform: activeTab === 'add' ? 'translateY(0)' : 'translateY(100%)', transition: 'transform 0.4s ease', zIndex: 50}}>
           <div style={{maxWidth: '400px', margin: '0 auto'}}>
             <div style={styles.formHeader}>
-              <h2 style={styles.formTitle}>New Archive</h2>
+              <h2 style={styles.formTitle}>New Record</h2>
               <button onClick={() => setActiveTab('map')} style={styles.closeButton}><X/></button>
             </div>
             <form onSubmit={handleSave} style={{display: 'flex', flexDirection: 'column', gap: '20px'}}>
@@ -301,39 +311,42 @@ export default function App() {
           </div>
         </div>
 
-        {/* 탭 3: 팀 아카이브 피드 */}
+        {/* 탭 3: 팀 아카이브 (풀스크린) */}
         <div style={{...styles.tabView, backgroundColor: '#f0fdf4', padding: '24px', overflowY: 'auto', transform: activeTab === 'list' ? 'translateX(0)' : 'translateX(100%)', transition: 'transform 0.4s ease', zIndex: 20}}>
           <div style={{maxWidth: '400px', margin: '0 auto'}}>
-            <h2 style={styles.formTitle}>Team Archive</h2>
-            <p style={{fontSize: '12px', color: '#94a3b8', marginBottom: '20px', fontWeight: 'bold'}}>팀원들과 함께 모은 사진과 기록입니다.</p>
+            <div style={styles.formHeader}>
+              <h2 style={styles.formTitle}>Team Archive</h2>
+              <button onClick={() => setActiveTab('map')} style={styles.closeButton}><X/></button>
+            </div>
+            <p style={{fontSize: '12px', color: '#94a3b8', marginBottom: '24px', fontWeight: 'bold'}}>우리 팀의 활동 현황을 큰 화면으로 확인하세요.</p>
             {reports.length === 0 ? (
-              <div style={{textAlign: 'center', padding: '50px 0', color: '#cbd5e1'}}>아직 기록이 없습니다.</div>
+              <div style={{textAlign: 'center', padding: '80px 0', color: '#cbd5e1', fontWeight: '900'}}>아직 등록된 기록이 없습니다.</div>
             ) : reports.map(r => (
               <div key={r.id} style={styles.feedCard}>
                 <div style={styles.feedHeader}>
-                  <div style={{display: 'flex', alignItems: 'center', gap: '10px'}}>
+                  <div style={{display: 'flex', alignItems: 'center', gap: '12px'}}>
                     <span style={styles.feedIconBox}>{TRASH_CATEGORIES.find(c => c.id === r.category)?.icon}</span>
                     <div>
-                      <h4 style={{fontSize: '14px', fontWeight: '900', margin: 0}}>{TRASH_CATEGORIES.find(c => c.id === r.category)?.label}</h4>
+                      <h4 style={{fontSize: '15px', fontWeight: '900', margin: 0}}>{TRASH_CATEGORIES.find(c => c.id === r.category)?.label}</h4>
                       <p style={{fontSize: '10px', color: '#94a3b8', margin: 0}}>{new Date(r.discoveredTime).toLocaleString()}</p>
                     </div>
                   </div>
                   <button onClick={() => set(ref(db, `reports/${r.id}/status`), r.status === 'pending' ? 'solved' : 'pending')} style={{...styles.solvedBtn, backgroundColor: r.status === 'solved' ? '#10b981' : '#f1f5f9', color: r.status === 'solved' ? 'white' : '#94a3b8'}}>
-                    {r.status === 'solved' ? '해결됨' : '진행중'}
+                    {r.status === 'solved' ? '해결 완료' : '진행중'}
                   </button>
                 </div>
                 {r.image && <img src={r.image} style={styles.feedImg} alt="현장 사진" />}
                 <p style={styles.feedDesc}>{r.description || "상세 설명이 없습니다."}</p>
                 <div style={styles.feedFooter}>
-                  <span style={{color: r.userName === nickname ? '#10b981' : '#4b5563'}}>👤 {r.userName} {r.userName === nickname ? '(나)' : ''}</span>
-                  <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
+                  <span style={{color: r.userName === nickname ? '#10b981' : '#4b5563', fontSize: '12px'}}>👤 {r.userName} {r.userName === nickname ? '(나)' : ''}</span>
+                  <div style={{display: 'flex', alignItems: 'center', gap: '10px'}}>
                     <span style={styles.feedAreaBadge}>{r.area}</span>
                     {r.userName === nickname && (
                       <button 
                         onClick={() => setShowDeleteModal(r.id)} 
-                        style={{border: 'none', background: 'none', color: '#ef4444', padding: '4px', cursor: 'pointer'}}
+                        style={{border: 'none', background: 'none', color: '#ef4444', padding: '5px', cursor: 'pointer'}}
                       >
-                        <Trash2 size={16} />
+                        <Trash2 size={18} />
                       </button>
                     )}
                   </div>
@@ -342,13 +355,67 @@ export default function App() {
             ))}
           </div>
         </div>
+
+        {/* 탭 4: 통계 (풀스크린 & 복귀 버튼 추가) */}
+        <div style={{...styles.tabView, backgroundColor: '#f0fdf4', padding: '24px', overflowY: 'auto', transform: activeTab === 'stats' ? 'translateX(0)' : 'translateX(-100%)', transition: 'transform 0.4s ease', zIndex: 30}}>
+           <div style={{maxWidth: '400px', margin: '0 auto'}}>
+            <div style={styles.formHeader}>
+              <h2 style={styles.formTitle}>Team Stats</h2>
+              <button onClick={() => setActiveTab('map')} style={styles.closeButton}><X/></button>
+            </div>
+            
+            <div style={styles.statsMainCard}>
+               <Award size={48} color="#10b981" style={{marginBottom: '16px'}}/>
+               <p style={{fontSize: '14px', fontWeight: 'bold', color: '#64748b', marginBottom: '8px'}}>금정구 환경 수호 프로젝트</p>
+               <h3 style={{fontSize: '32px', fontWeight: '900', color: '#1f2937', marginBottom: '24px'}}>성공률 {solvedRate}%</h3>
+               
+               <div style={styles.statsGrid}>
+                  <div style={styles.statBox}>
+                    <span style={styles.statBoxLabel}>발견됨</span>
+                    <span style={styles.statBoxValue}>{totalReports}건</span>
+                  </div>
+                  <div style={styles.statBox}>
+                    <span style={styles.statBoxLabel}>해결됨</span>
+                    <span style={{...styles.statBoxValue, color: '#10b981'}}>{solvedReports}건</span>
+                  </div>
+               </div>
+            </div>
+
+            <div style={{marginTop: '32px'}}>
+               <h4 style={{fontSize: '16px', fontWeight: '900', color: '#1f2937', marginBottom: '16px'}}>카테고리별 현황</h4>
+               <div style={{display: 'flex', flexDirection: 'column', gap: '12px'}}>
+                  {TRASH_CATEGORIES.map(cat => {
+                    const count = reports.filter(r => r.category === cat.id).length;
+                    const percent = totalReports > 0 ? (count / totalReports) * 100 : 0;
+                    return (
+                      <div key={cat.id} style={styles.progressRow}>
+                        <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: '6px'}}>
+                          <span style={{fontSize: '13px', fontWeight: 'bold'}}>{cat.icon} {cat.label}</span>
+                          <span style={{fontSize: '12px', fontWeight: '900', color: '#64748b'}}>{count}건</span>
+                        </div>
+                        <div style={styles.progressBarBg}>
+                           <div style={{...styles.progressBarFill, width: `${percent}%`, backgroundColor: cat.color}}></div>
+                        </div>
+                      </div>
+                    )
+                  })}
+               </div>
+            </div>
+            
+            <button onClick={() => setActiveTab('map')} style={styles.statsReturnBtn}>
+               <MapPin size={18}/> 지도로 돌아가기
+            </button>
+           </div>
+        </div>
       </main>
 
-      {/* 삭제 확인 모달 UI */}
+      {/* 삭제 확인 모달 */}
       {showDeleteModal && (
         <div style={styles.modalOverlay}>
           <div style={styles.modalContent}>
-            <p style={{fontWeight: '900', marginBottom: '20px'}}>이 기록을 정말 삭제할까요?</p>
+            <AlertTriangle size={40} color="#ef4444" style={{marginBottom: '16px'}}/>
+            <p style={{fontWeight: '900', fontSize: '18px', marginBottom: '10px'}}>기록 삭제</p>
+            <p style={{fontSize: '14px', color: '#64748b', marginBottom: '24px'}}>이 소중한 기록을 정말 지울까요?</p>
             <div style={{display: 'flex', gap: '10px', width: '100%'}}>
               <button onClick={() => setShowDeleteModal(null)} style={{...styles.modalBtn, backgroundColor: '#f1f5f9', color: '#64748b'}}>취소</button>
               <button onClick={() => handleDelete(showDeleteModal)} style={{...styles.modalBtn, backgroundColor: '#ef4444', color: 'white'}}>삭제</button>
@@ -357,10 +424,20 @@ export default function App() {
         </div>
       )}
 
+      {/* 하단 내비게이션 바 */}
       <nav style={styles.navbar}>
-        <button onClick={() => setActiveTab('map')} style={{...styles.navBtn, color: activeTab === 'map' ? '#10b981' : '#cbd5e1'}}><MapPin size={26} fill={activeTab === 'map' ? '#10b981' : 'none'}/></button>
-        <button onClick={() => setActiveTab('list')} style={{...styles.navBtn, color: activeTab === 'list' ? '#10b981' : '#cbd5e1'}}><List size={26}/></button>
-        <button onClick={() => setActiveTab('stats')} style={{...styles.navBtn, color: activeTab === 'stats' ? '#10b981' : '#cbd5e1'}}><BarChart3 size={26}/></button>
+        <button onClick={() => setActiveTab('map')} style={{...styles.navBtn, color: activeTab === 'map' ? '#10b981' : '#cbd5e1'}}>
+          <MapPin size={26} fill={activeTab === 'map' ? '#10b981' : 'none'}/>
+          <span style={{fontSize: '10px', fontWeight: '900', marginTop: '4px'}}>지도</span>
+        </button>
+        <button onClick={() => setActiveTab('list')} style={{...styles.navBtn, color: activeTab === 'list' ? '#10b981' : '#cbd5e1'}}>
+          <List size={26}/>
+          <span style={{fontSize: '10px', fontWeight: '900', marginTop: '4px'}}>아카이브</span>
+        </button>
+        <button onClick={() => setActiveTab('stats')} style={{...styles.navBtn, color: activeTab === 'stats' ? '#10b981' : '#cbd5e1'}}>
+          <BarChart3 size={26}/>
+          <span style={{fontSize: '10px', fontWeight: '900', marginTop: '4px'}}>통계</span>
+        </button>
       </nav>
 
       <style>{`
@@ -406,7 +483,7 @@ const styles = {
   headerTitle: { fontSize: '14px', fontWeight: '900', color: '#1f2937', margin: 0 },
   headerUser: { fontSize: '11px', fontWeight: 'bold', color: '#059669', backgroundColor: '#d1fae5', padding: '5px 12px', borderRadius: '20px' },
   mainContent: { flex: 1, position: 'relative' },
-  tabView: { position: 'absolute', inset: 0, transition: 'all 0.4s ease' },
+  tabView: { position: 'absolute', inset: 0, transition: 'all 0.4s ease-out' },
   floatingPanel: { position: 'absolute', bottom: '110px', left: '16px', right: '16px', zIndex: 1001 },
   statsRow: { backgroundColor: 'white', padding: '15px', borderRadius: '30px', boxShadow: '0 15px 35px rgba(0,0,0,0.1)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
   statLabel: { fontSize: '8px', fontWeight: '900', color: '#94a3b8', textTransform: 'uppercase', marginBottom: '2px' },
@@ -428,17 +505,28 @@ const styles = {
   selectInput: { width: '100%', padding: '16px', borderRadius: '20px', border: 'none', backgroundColor: 'white', fontSize: '13px', fontWeight: 'bold', color: '#1f2937' },
   textArea: { width: '100%', padding: '20px', borderRadius: '28px', height: '120px', border: 'none', backgroundColor: 'white', fontSize: '14px', outline: 'none', resize: 'none' },
   saveButton: { width: '100%', padding: '20px', backgroundColor: '#10b981', color: 'white', borderRadius: '25px', border: 'none', fontWeight: '900', fontSize: '18px' },
-  feedCard: { backgroundColor: 'white', padding: '20px', borderRadius: '32px', marginBottom: '20px', boxShadow: '0 4px 10px rgba(0,0,0,0.03)' },
-  feedHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' },
-  feedIconBox: { fontSize: '26px', padding: '6px', backgroundColor: '#f0fdf4', borderRadius: '14px' },
-  solvedBtn: { padding: '6px 14px', borderRadius: '14px', border: 'none', fontSize: '10px', fontWeight: '900' },
-  feedImg: { width: '100%', height: '180px', objectFit: 'cover', borderRadius: '24px', marginBottom: '14px' },
-  feedDesc: { fontSize: '13px', fontWeight: '500', color: '#4b5563', padding: '15px', backgroundColor: '#f0fdf4', borderRadius: '22px', borderLeft: '4px solid #10b981' },
-  feedFooter: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '14px', paddingTop: '14px', borderTop: '1px solid #f0fdf4', fontSize: '11px', fontWeight: 'bold' },
-  feedAreaBadge: { backgroundColor: 'white', color: '#10b981', padding: '4px 10px', borderRadius: '15px', border: '1px solid #d1fae5' },
-  navbar: { backgroundColor: 'rgba(255,255,255,0.9)', padding: '15px 20px 30px 20px', display: 'flex', justifyContent: 'space-around', borderTop: '1px solid #d1fae5' },
-  navBtn: { border: 'none', backgroundColor: 'transparent', padding: '10px' },
-  modalOverlay: { position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 3000, padding: '20px' },
-  modalContent: { backgroundColor: 'white', padding: '30px', borderRadius: '30px', width: '100%', maxWidth: '300px', textAlign: 'center' },
-  modalBtn: { flex: 1, padding: '12px', borderRadius: '15px', border: 'none', fontWeight: '900', cursor: 'pointer' }
+  feedCard: { backgroundColor: 'white', padding: '24px', borderRadius: '40px', marginBottom: '24px', boxShadow: '0 4px 15px rgba(0,0,0,0.03)' },
+  feedHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' },
+  feedIconBox: { fontSize: '28px', padding: '8px', backgroundColor: '#f0fdf4', borderRadius: '16px' },
+  solvedBtn: { padding: '8px 16px', borderRadius: '16px', border: 'none', fontSize: '11px', fontWeight: '900' },
+  feedImg: { width: '100%', height: '220px', objectFit: 'cover', borderRadius: '32px', marginBottom: '16px' },
+  feedDesc: { fontSize: '14px', fontWeight: '500', color: '#4b5563', padding: '20px', backgroundColor: '#f0fdf4', borderRadius: '28px', borderLeft: '5px solid #10b981', lineHeight: '1.6' },
+  feedFooter: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '16px', paddingTop: '16px', borderTop: '1px solid #f0fdf4', fontWeight: 'bold' },
+  feedAreaBadge: { backgroundColor: 'white', color: '#10b981', padding: '5px 12px', borderRadius: '15px', border: '1px solid #d1fae5', fontSize: '11px' },
+  navbar: { backgroundColor: 'rgba(255,255,255,0.95)', padding: '15px 20px 30px 20px', display: 'flex', justifyContent: 'space-around', borderTop: '1px solid #d1fae5', zIndex: 2000 },
+  navBtn: { border: 'none', backgroundColor: 'transparent', display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'pointer', transition: 'all 0.2s' },
+  modalOverlay: { position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 3000, padding: '20px' },
+  modalContent: { backgroundColor: 'white', padding: '35px', borderRadius: '40px', width: '100%', maxWidth: '320px', textAlign: 'center' },
+  modalBtn: { flex: 1, padding: '15px', borderRadius: '20px', border: 'none', fontWeight: '900', cursor: 'pointer' },
+  
+  // 통계 전용 스타일
+  statsMainCard: { backgroundColor: 'white', borderRadius: '40px', padding: '40px 20px', textAlign: 'center', boxShadow: '0 10px 30px rgba(0,0,0,0.03)' },
+  statsGrid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' },
+  statBox: { backgroundColor: '#f8fafc', padding: '20px', borderRadius: '25px', display: 'flex', flexDirection: 'column', gap: '4px' },
+  statBoxLabel: { fontSize: '11px', fontWeight: '900', color: '#64748b', textTransform: 'uppercase' },
+  statBoxValue: { fontSize: '22px', fontWeight: '900', color: '#1f2937' },
+  progressRow: { backgroundColor: 'white', padding: '16px', borderRadius: '24px', boxShadow: '0 2px 8px rgba(0,0,0,0.02)' },
+  progressBarBg: { height: '8px', backgroundColor: '#f1f5f9', borderRadius: '4px', overflow: 'hidden' },
+  progressBarFill: { height: '100%', borderRadius: '4px', transition: 'width 1s ease-in-out' },
+  statsReturnBtn: { width: '100%', marginTop: '32px', marginBottom: '80px', padding: '20px', backgroundColor: '#1a202c', color: 'white', borderRadius: '25px', border: 'none', fontWeight: '900', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' }
 };
