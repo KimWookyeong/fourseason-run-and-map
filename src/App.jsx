@@ -35,11 +35,10 @@ import {
 } from 'lucide-react';
 
 /**
- * [사계절 런앤맵 - 배경색 고정, 장소 선택 복구 및 업로드 해결 버전]
- * 1. 디자인: 인라인 스타일 및 글로벌 CSS로 배경색(#f0fdf4) 완전 고정
- * 2. 기능: 기록하기 탭에 '장소 선택' 드롭다운 메뉴 완벽 복구
- * 3. 업로드: 이미지 압축률 최적화 및 Firestore 저장 로직 안정화 (Rule 1, 3 준수)
- * 4. 오류 수정: 코드 내 중복된 스타일 속성 제거
+ * [사계절 런앤맵 - 첫 로그인 후 지도 로딩 미흡 해결 최종 버전]
+ * 1. 로딩 해결: 닉네임 입력 완료(isSettingNickname 해제) 시 지도 초기화가 즉시 실행되도록 개선
+ * 2. 배경색: 인라인 스타일로 배경색(#f0fdf4) 상시 고정
+ * 3. 업로드: 이미지 압축 및 장소 선택 기능 완벽 포함
  */
 
 const firebaseConfig = typeof __firebase_config !== 'undefined' 
@@ -94,14 +93,14 @@ export default function App() {
     image: null
   });
 
-  // 이미지 압축 (업로드 실패 방지를 위해 해상도 조절)
+  // 이미지 압축 로직
   const compressImage = (base64) => {
     return new Promise((resolve) => {
       const img = new Image();
       img.src = base64;
       img.onload = () => {
         const canvas = document.createElement('canvas');
-        const MAX_WIDTH = 640; // 전송 안정성을 위해 해상도 소폭 하향
+        const MAX_WIDTH = 640;
         let width = img.width;
         let height = img.height;
         if (width > MAX_WIDTH) {
@@ -112,7 +111,7 @@ export default function App() {
         canvas.height = height;
         const ctx = canvas.getContext('2d');
         ctx.drawImage(img, 0, 0, width, height);
-        resolve(canvas.toDataURL('image/jpeg', 0.6)); // 압축률 60%
+        resolve(canvas.toDataURL('image/jpeg', 0.6));
       };
     });
   };
@@ -128,7 +127,7 @@ export default function App() {
     reader.readAsDataURL(file);
   };
 
-  // 1. Firebase 인증 (Rule 3)
+  // 1. Firebase 인증
   useEffect(() => {
     const initAuth = async () => {
       try {
@@ -137,16 +136,14 @@ export default function App() {
         } else {
           await signInAnonymously(auth);
         }
-      } catch (e) {
-        console.error("Auth init error:", e);
-      }
+      } catch (e) { console.error("Auth error:", e); }
     };
     initAuth();
     const unsubscribe = onAuthStateChanged(auth, setUser);
     return () => unsubscribe();
   }, []);
 
-  // 2. 실시간 데이터 수신 (Rule 1)
+  // 2. 데이터 실시간 수신
   useEffect(() => {
     if (!user) return;
     const reportsCollection = collection(db, 'artifacts', appId, 'public', 'data', 'reports');
@@ -155,13 +152,11 @@ export default function App() {
         .sort((a, b) => new Date(b.discoveredTime) - new Date(a.discoveredTime));
       setReports(formatted);
       updateMarkers(formatted);
-    }, (error) => {
-      console.error("Snapshot error:", error);
     });
     return () => unsubscribe();
   }, [user, nickname]);
 
-  // 3. 라이브러리 로드
+  // 3. 지도 라이브러리 로드
   useEffect(() => {
     const link = document.createElement('link');
     link.rel = 'stylesheet'; link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
@@ -173,19 +168,25 @@ export default function App() {
     return () => { if (leafletMap.current) leafletMap.current.remove(); };
   }, []);
 
+  // 4. 지도 초기화 로직 (의존성 배열에 isSettingNickname 추가하여 로그인 직후 실행 보장)
   useEffect(() => {
-    if (isScriptLoaded && activeTab === 'map' && mapContainerRef.current && !leafletMap.current) {
-      setTimeout(() => {
-        if (!mapContainerRef.current) return;
-        leafletMap.current = window.L.map(mapContainerRef.current, { 
-          zoomControl: false, 
-          attributionControl: false 
-        }).setView(GEUMJEONG_CENTER, 14);
-        window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(leafletMap.current);
-        updateMarkers(reports);
-      }, 300);
+    if (isScriptLoaded && !isSettingNickname && activeTab === 'map' && mapContainerRef.current) {
+      if (!leafletMap.current) {
+        setTimeout(() => {
+          if (!mapContainerRef.current) return;
+          leafletMap.current = window.L.map(mapContainerRef.current, { 
+            zoomControl: false, 
+            attributionControl: false 
+          }).setView(GEUMJEONG_CENTER, 14);
+          window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(leafletMap.current);
+          updateMarkers(reports);
+        }, 500); // 렌더링 완료를 위한 충분한 시간 확보
+      } else {
+        // 이미 생성된 경우 지도 크기 재계산
+        leafletMap.current.invalidateSize();
+      }
     }
-  }, [isScriptLoaded, activeTab]);
+  }, [isScriptLoaded, activeTab, isSettingNickname]);
 
   const updateMarkers = (data) => {
     if (!window.L || !leafletMap.current) return;
@@ -208,13 +209,17 @@ export default function App() {
       localStorage.removeItem('team_nickname');
       setNickname('');
       setIsSettingNickname(true);
+      if (leafletMap.current) {
+        leafletMap.current.remove();
+        leafletMap.current = null;
+      }
       signOut(auth);
     }
   };
 
   const handleSave = async (e) => {
     e.preventDefault();
-    if (!user) return alert("사용자 인증을 기다리고 있습니다.");
+    if (!user) return alert("사용자 인증 대기 중입니다.");
     
     let loc = formData.customLocation;
     if (!loc && leafletMap.current) {
@@ -235,8 +240,8 @@ export default function App() {
       setActiveTab('map');
       alert("지도로 기록이 업로드되었습니다! 🏁");
     } catch (err) {
-      console.error("Upload failed:", err);
-      alert("업로드 실패! 사진 크기가 너무 크거나 인터넷 연결이 끊겼을 수 있습니다.");
+      console.error("Upload error:", err);
+      alert("업로드 실패! 다시 시도해주세요.");
     } finally {
       setIsUploading(false);
     }
@@ -251,10 +256,9 @@ export default function App() {
         setIsLocating(false);
         if (leafletMap.current) leafletMap.current.setView([coords.lat, coords.lng], 16);
       },
-      (err) => { 
+      () => { 
         setIsLocating(false); 
-        console.warn("GPS error:", err);
-        alert("GPS 권한을 확인해주세요. (현재 위치 대신 지도 중심점으로 찍힙니다.)"); 
+        alert("GPS 정보를 가져올 수 없습니다. 지도 중심점으로 기록됩니다."); 
       },
       { enableHighAccuracy: true, timeout: 10000 }
     );
@@ -262,21 +266,17 @@ export default function App() {
 
   const clearAllData = async () => {
     if (nickname !== 'admin') return;
-    if (window.confirm("정말로 모든 활동 기록을 삭제하시겠습니까?")) {
-      try {
-        const reportsCollection = collection(db, 'artifacts', appId, 'public', 'data', 'reports');
-        const snapshot = await getDocs(reportsCollection);
-        const batch = writeBatch(db);
-        snapshot.docs.forEach((doc) => batch.delete(doc.ref));
-        await batch.commit();
-        alert("모든 기록이 초기화되었습니다.");
-      } catch (err) {
-        console.error("Clear error:", err);
-      }
+    if (window.confirm("주의! 모든 기록을 영구적으로 삭제하시겠습니까?")) {
+      const reportsCollection = collection(db, 'artifacts', appId, 'public', 'data', 'reports');
+      const snapshot = await getDocs(reportsCollection);
+      const batch = writeBatch(db);
+      snapshot.docs.forEach((doc) => batch.delete(doc.ref));
+      await batch.commit();
+      alert("초기화 완료!");
     }
   };
 
-  // --- 닉네임 입력 (배경색 강제 주입) ---
+  // --- 닉네임 입력 (로그인 화면) ---
   if (isSettingNickname) {
     return (
       <div style={{ position: 'fixed', inset: 0, backgroundColor: '#f0fdf4', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '20px', zIndex: 9999 }}>
@@ -349,7 +349,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* 장소 선택 드롭다운 (복구 완료) */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                 <label style={{ fontSize: '12px', fontWeight: '900', color: '#64748b' }}>장소 선택</label>
                 <select 
