@@ -1,7 +1,23 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { initializeApp } from 'firebase/app';
-import { getDatabase, ref, push, onValue, set, remove } from 'firebase/database';
-import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
+import { 
+  getAuth, 
+  signInAnonymously, 
+  onAuthStateChanged, 
+  signOut, 
+  signInWithCustomToken 
+} from 'firebase/auth';
+import { 
+  getFirestore, 
+  collection, 
+  doc, 
+  addDoc, 
+  updateDoc, 
+  deleteDoc, 
+  onSnapshot, 
+  query, 
+  timestamp 
+} from 'firebase/firestore';
 import { 
   MapPin, 
   BarChart3, 
@@ -20,30 +36,40 @@ import {
   ChevronRight,
   Heart,
   Trash2,
+  LogOut,
+  Sparkles,
+  Zap,
   Award,
-  CheckCircle2
+  Lightbulb
 } from 'lucide-react';
 
 /**
- * [사계절 런앤맵 프로젝트 - 아카이브 풀스크린 및 통계 보강본]
- * - 모든 탭(아카이브, 통계, 기록)을 풀스크린 레이아웃으로 변경
- * - 통계 탭에 실시간 데이터 요약 및 지도 복귀(X) 버튼 추가
- * - 아카이브(피드) 가독성 극대화
+ * [사계절 런앤맵 프로젝트 - AI 통합 & 오류 수정 최종본]
+ * - Firebase Auth Token Mismatch 해결 (Fallback 로직 추가)
+ * - Firestore 기반 데이터 저장 (규칙 준수)
+ * - AI 이미지 분석 및 자동 설명 생성
  */
-const firebaseConfig = {
-  apiKey: "AIzaSyBYfwtdXjz4ekJbH83merNVPZemb_bc3NE",
-  authDomain: "fourseason-run-and-map.firebaseapp.com",
-  projectId: "fourseason-run-and-map",
-  storageBucket: "fourseason-run-and-map.firebasestorage.app",
-  messagingSenderId: "671510183044",
-  appId: "1:671510183044:web:59ad0cc29cf6bd98f3d6d1",
-  measurementId: "G-NNKBYB9Y5G",
-  databaseURL: "https://fourseason-run-and-map-default-rtdb.firebaseio.com/" 
-};
 
+// 전역 변수 설정 (시스템 제공 환경 변수 우선 사용)
+const firebaseConfig = typeof __firebase_config !== 'undefined' 
+  ? JSON.parse(__firebase_config) 
+  : {
+      apiKey: "AIzaSyBYfwtdXjz4ekJbH83merNVPZemb_bc3NE",
+      authDomain: "fourseason-run-and-map.firebaseapp.com",
+      projectId: "fourseason-run-and-map",
+      storageBucket: "fourseason-run-and-map.firebasestorage.app",
+      messagingSenderId: "671510183044",
+      appId: "1:671510183044:web:59ad0cc29cf6bd98f3d6d1",
+      databaseURL: "https://fourseason-run-and-map-default-rtdb.firebaseio.com/" 
+    };
+
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'fourseason-run-and-map';
+const apiKey = ""; // Gemini API Key (제공된 환경에서 자동 처리)
+
+// Firebase 서비스 초기화
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
-const db = getDatabase(app);
+const db = getFirestore(app);
 
 const TRASH_CATEGORIES = [
   { id: 'cup', label: '일회용 컵', color: '#10b981', icon: '🥤' },
@@ -63,8 +89,12 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('map');
   const [reports, setReports] = useState([]);
   const [isLocating, setIsLocating] = useState(false);
-  const [showDeleteModal, setShowDeleteModal] = useState(null);
   
+  // AI States
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [aiMessage, setAiMessage] = useState("활동가님의 기록을 기다리고 있어요! ✨");
+  const [isGeneratingMsg, setIsGeneratingMsg] = useState(false);
+
   const mapContainerRef = useRef(null);
   const leafletMap = useRef(null);
   const markersRef = useRef({});
@@ -79,17 +109,143 @@ export default function App() {
     image: null
   });
 
+  // --- Gemini API Helper (지수 백오프 적용) ---
+  const callGemini = async (payload) => {
+    let retries = 0;
+    const maxRetries = 5;
+    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
+
+    while (retries < maxRetries) {
+      try {
+        const response = await fetch(endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        if (response.ok) return await response.json();
+        const delay = Math.pow(2, retries) * 1000;
+        await new Promise(res => setTimeout(res, delay));
+        retries++;
+      } catch (e) {
+        retries++;
+        if (retries === maxRetries) throw e;
+      }
+    }
+  };
+
+  // AI 분석 기능
+  const analyzeImage = async () => {
+    if (!formData.image) return;
+    setIsAnalyzing(true);
+    try {
+      const base64Data = formData.image.split(',')[1];
+      const payload = {
+        contents: [{
+          parts: [
+            { text: "이 쓰레기 사진을 분석해줘. 결과는 반드시 JSON 형식으로만 보내줘. 'category'는 (cup, smoke, plastic, bulky, etc) 중 하나여야 하고, 'description'은 이 쓰레기가 환경에 미치는 영향과 함께 한국어로 친절하게 1문장으로 적어줘." },
+            { inlineData: { mimeType: "image/png", data: base64Data } }
+          ]
+        }],
+        generationConfig: { responseMimeType: "application/json" }
+      };
+      const result = await callGemini(payload);
+      const textResponse = result.candidates?.[0]?.content?.parts?.[0]?.text;
+      const data = JSON.parse(textResponse || "{}");
+      if (data.category) {
+        setFormData(prev => ({ 
+          ...prev, 
+          category: data.category, 
+          description: data.description || prev.description 
+        }));
+      }
+    } catch (e) {
+      console.error("AI Analysis failed", e);
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
+
+  // AI 응원 메시지 생성
+  const updateAiMessage = async () => {
+    setIsGeneratingMsg(true);
+    try {
+      const solvedCount = reports.filter(r => r.status === 'solved').length;
+      const payload = {
+        contents: [{
+          parts: [{ text: `현재 금정구 활동가들이 총 ${reports.length}개의 쓰레기를 찾았고 ${solvedCount}개를 해결했어. 활동가들에게 동기부여를 주는 짧고 따뜻한 응원 메시지를 한국어로 1문장 생성해줘.` }]
+        }]
+      };
+      const result = await callGemini(payload);
+      setAiMessage(result.candidates?.[0]?.content?.parts?.[0]?.text || aiMessage);
+    } catch (e) {
+      console.error("AI Message generation failed", e);
+    } finally {
+      setIsGeneratingMsg(false);
+    }
+  };
+
+  // Firebase 초기 인증 (토큰 불일치 오류 해결을 위한 Fallback 로직)
+  useEffect(() => {
+    const initAuth = async () => {
+      try {
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          try {
+            await signInWithCustomToken(auth, __initial_auth_token);
+          } catch (tokenError) {
+            console.warn("Custom token failed, falling back to anonymous auth.", tokenError);
+            await signInAnonymously(auth);
+          }
+        } else {
+          await signInAnonymously(auth);
+        }
+      } catch (e) { 
+        console.error("Authentication failed:", e); 
+      }
+    };
+    initAuth();
+    const unsubscribeAuth = onAuthStateChanged(auth, setUser);
+    return () => unsubscribeAuth();
+  }, []);
+
+  // Firestore 실시간 데이터 동기화
+  useEffect(() => {
+    if (!user) return;
+    
+    // 규칙 기반 경로: /artifacts/{appId}/public/data/reports
+    const reportsCollection = collection(db, 'artifacts', appId, 'public', 'data', 'reports');
+    
+    const unsubscribeData = onSnapshot(reportsCollection, (snapshot) => {
+      const formatted = snapshot.docs.map(doc => ({ 
+        id: doc.id, 
+        ...doc.data() 
+      })).sort((a, b) => new Date(b.discoveredTime) - new Date(a.discoveredTime));
+      
+      setReports(formatted);
+      updateMarkers(formatted);
+    }, (error) => {
+      console.error("Firestore Listen Error:", error);
+    });
+
+    return () => unsubscribeData();
+  }, [user, nickname]);
+
+  // 지도 라이브러리 로드
   useEffect(() => {
     const link = document.createElement('link');
-    link.rel = 'stylesheet';
-    link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
+    link.rel = 'stylesheet'; link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
     document.head.appendChild(link);
-
+    
     const script = document.createElement('script');
     script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
-    script.async = true;
+    script.async = true; 
     script.onload = () => setIsScriptLoaded(true);
     document.head.appendChild(script);
+
+    if (!document.getElementById('tailwind-cdn')) {
+      const tw = document.createElement('script');
+      tw.id = 'tailwind-cdn'; tw.src = 'https://cdn.tailwindcss.com';
+      document.head.appendChild(tw);
+    }
 
     return () => { if (leafletMap.current) leafletMap.current.remove(); };
   }, []);
@@ -101,76 +257,73 @@ export default function App() {
         leafletMap.current = window.L.map(mapContainerRef.current, { zoomControl: false }).setView(GEUMJEONG_CENTER, 14);
         window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(leafletMap.current);
         if (reports.length > 0) updateMarkers(reports);
-      }, 200);
+      }, 300);
     }
+    if (activeTab === 'stats' && reports.length > 0) updateAiMessage();
   }, [isScriptLoaded, activeTab]);
-
-  useEffect(() => {
-    signInAnonymously(auth).catch(console.error);
-    const unsubscribeAuth = onAuthStateChanged(auth, setUser);
-
-    const reportsRef = ref(db, 'reports');
-    const unsubscribeData = onValue(reportsRef, (snapshot) => {
-      const data = snapshot.val();
-      if (data) {
-        const formatted = Object.keys(data).map(key => ({ id: key, ...data[key] })).reverse();
-        setReports(formatted);
-        updateMarkers(formatted);
-      } else {
-        setReports([]);
-        if (leafletMap.current) {
-          Object.values(markersRef.current).forEach(m => m.remove());
-          markersRef.current = {};
-        }
-      }
-    });
-
-    return () => {
-      unsubscribeAuth();
-      unsubscribeData();
-    };
-  }, [nickname]);
 
   const updateMarkers = (data) => {
     if (!window.L || !leafletMap.current) return;
     Object.values(markersRef.current).forEach(m => m.remove());
     markersRef.current = {};
-
+    
     data.forEach(report => {
+      if (!report.location) return;
       const cat = TRASH_CATEGORIES.find(c => c.id === report.category) || TRASH_CATEGORIES[4];
       const isMine = report.userName === nickname;
-      
-      const iconHtml = `
-        <div style="background-color:${cat.color}; width:36px; height:36px; border-radius:12px; border:3px solid ${isMine ? '#000' : '#fff'}; display:flex; align-items:center; justify-content:center; font-size:20px; box-shadow:0 4px 15px rgba(0,0,0,0.2); transform:rotate(45deg);">
-          <div style="transform:rotate(-45deg)">${cat.icon}</div>
-        </div>
-      `;
-      
+      const iconHtml = `<div style="background-color:${cat.color}; width:36px; height:36px; border-radius:12px; border:3px solid ${isMine ? '#000' : '#fff'}; display:flex; align-items:center; justify-content:center; font-size:20px; box-shadow:0 4px 15px rgba(0,0,0,0.2); transform:rotate(45deg);"><div style="transform:rotate(-45deg)">${cat.icon}</div></div>`;
       const icon = window.L.divIcon({ html: iconHtml, className: 'custom-pin', iconSize: [36, 36], iconAnchor: [18, 18] });
       const marker = window.L.marker([report.location.lat, report.location.lng], { icon }).addTo(leafletMap.current);
-      
-      marker.bindPopup(`
-        <div style="font-family:sans-serif; min-width:160px; padding:5px;">
-          <b style="color:${cat.color}; font-size:16px;">${cat.icon} ${cat.label}</b><br/>
-          <div style="margin-top:8px; font-size:12px; color:#4a5568;">
-            <b>작성자:</b> ${report.userName} ${isMine ? '(나)' : ''}<br/>
-            <b>위치:</b> ${report.area}
-          </div>
-          <p style="font-size:11px; color:#718096; margin-top:8px; border-top:1px solid #edf2f7; padding-top:5px;">
-            ${report.description || '내용 없음'}
-          </p>
-        </div>
-      `);
+      marker.bindPopup(`<div style="font-family:sans-serif; min-width:160px; padding:4px;"><b>${cat.icon} ${cat.label}</b><br/><small style="color:#64748b">활동가: ${report.userName}</small></div>`);
       markersRef.current[report.id] = marker;
     });
   };
 
-  const handleImageChange = (e) => {
-    const file = e.target.files[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => setFormData(prev => ({ ...prev, image: reader.result }));
-      reader.readAsDataURL(file);
+  const handleLogout = async () => {
+    if (window.confirm("로그아웃하시겠습니까? 닉네임 정보가 초기화됩니다.")) {
+      localStorage.removeItem('team_nickname');
+      setNickname('');
+      setIsSettingNickname(true);
+      await signOut(auth);
+    }
+  };
+
+  const handleSave = async (e) => {
+    e.preventDefault();
+    if (!user) return;
+    
+    const center = leafletMap.current ? leafletMap.current.getCenter() : { lat: GEUMJEONG_CENTER[0], lng: GEUMJEONG_CENTER[1] };
+    const loc = formData.customLocation || { lat: center.lat, lng: center.lng };
+    
+    try {
+      const reportsCollection = collection(db, 'artifacts', appId, 'public', 'data', 'reports');
+      await addDoc(reportsCollection, { 
+        ...formData, 
+        location: loc, 
+        userName: nickname, 
+        discoveredTime: new Date().toISOString() 
+      });
+      
+      setFormData({ category: 'cup', area: GEUMJEONG_AREAS[0], description: '', status: 'pending', customLocation: null, image: null });
+      setActiveTab('map');
+    } catch (err) {
+      console.error("Save error:", err);
+    }
+  };
+
+  const toggleStatus = async (report) => {
+    if (!user) return;
+    const reportRef = doc(db, 'artifacts', appId, 'public', 'data', 'reports', report.id);
+    await updateDoc(reportRef, {
+      status: report.status === 'pending' ? 'solved' : 'pending'
+    });
+  };
+
+  const handleDelete = async (id) => {
+    if (!user) return;
+    if (window.confirm("기록을 삭제할까요?")) {
+      const reportRef = doc(db, 'artifacts', appId, 'public', 'data', 'reports', id);
+      await deleteDoc(reportRef);
     }
   };
 
@@ -187,168 +340,115 @@ export default function App() {
     );
   };
 
-  const handleSave = async (e) => {
-    e.preventDefault();
-    if (!nickname) return;
-    const center = leafletMap.current ? leafletMap.current.getCenter() : { lat: GEUMJEONG_CENTER[0], lng: GEUMJEONG_CENTER[1] };
-    const loc = formData.customLocation || { lat: center.lat, lng: center.lng };
-    
-    await push(ref(db, 'reports'), { 
-      ...formData, 
-      location: loc, 
-      userName: nickname, 
-      discoveredTime: new Date().toISOString() 
-    });
-    
-    setFormData({ category: 'cup', area: GEUMJEONG_AREAS[0], description: '', status: 'pending', customLocation: null, image: null });
-    setActiveTab('map');
-  };
-
-  const handleDelete = (id) => {
-    remove(ref(db, `reports/${id}`));
-    setShowDeleteModal(null);
-  };
-
   if (isSettingNickname) {
     return (
-      <div style={styles.mainContainer}>
-        <div style={styles.logoSection}>
-          <h1 style={styles.titleText}>FOUR SEASONS</h1>
-          <div style={styles.subTitleText}>RUN & MAP GEUMJEONG</div>
+      <div className="h-screen w-screen bg-[#f0fdf4] flex flex-col items-center justify-center p-8 font-sans">
+        <div className="bg-emerald-600 w-24 h-24 rounded-[32px] flex items-center justify-center mb-8 shadow-2xl rotate-12">
+          <Navigation size={48} className="text-white" fill="currentColor" />
         </div>
-        <div style={styles.card}>
-          <h2 style={styles.cardHeading}>반가워요 활동가님!</h2>
-          <p style={styles.cardSub}>함께 지도를 완성하기 위해<br/>닉네임을 입력해 주세요.</p>
-          <form style={styles.form} onSubmit={(e) => { e.preventDefault(); if(nickname.trim()){ localStorage.setItem('team_nickname', nickname); setIsSettingNickname(false); } }}>
-            <input 
-              type="text" value={nickname} onChange={e => setNickname(e.target.value)} placeholder="예: 금정_철수" 
-              style={styles.inputField} autoFocus 
-            />
-            <button style={styles.submitButton}>지도 합류하기 <ChevronRight size={24}/></button>
+        <h1 className="text-5xl font-black text-slate-800 tracking-tighter mb-2 italic uppercase text-center">Four Seasons</h1>
+        <p className="text-emerald-600 font-bold text-xs tracking-[0.4em] mb-12">RUN & MAP GEUMJEONG</p>
+        <div className="bg-white p-10 rounded-[50px] shadow-2xl w-full max-w-sm border border-white text-center">
+          <h2 className="text-2xl font-black text-slate-800 mb-2">반가워요!</h2>
+          <p className="text-slate-400 text-sm mb-10 leading-relaxed">우리 팀의 실시간 지도에 합류하기 위해<br/>닉네임을 적어주세요.</p>
+          <form onSubmit={(e) => { e.preventDefault(); if(nickname.trim()){ localStorage.setItem('team_nickname', nickname); setIsSettingNickname(false); } }}>
+            <input type="text" value={nickname} onChange={e => setNickname(e.target.value)} placeholder="예: 금정_철수" className="w-full p-5 rounded-3xl bg-emerald-50 border-none outline-none font-bold text-center text-xl text-emerald-800 mb-6 shadow-inner" autoFocus />
+            <button className="w-full bg-emerald-600 text-white font-black py-5 rounded-3xl shadow-xl active:scale-95 transition-all text-lg flex items-center justify-center gap-2">지도 합류하기 <ChevronRight size={20}/></button>
           </form>
         </div>
       </div>
     );
   }
 
-  // 통계 계산 로직
-  const totalReports = reports.length;
-  const solvedReports = reports.filter(r => r.status === 'solved').length;
-  const solvedRate = totalReports > 0 ? Math.round((solvedReports / totalReports) * 100) : 0;
-
   return (
-    <div style={styles.appRoot}>
-      <header style={styles.header}>
-        <div style={{display: 'flex', alignItems: 'center', gap: '8px'}}>
-          <div style={styles.headerIcon}><Navigation size={18} fill="currentColor"/></div>
-          <h1 style={styles.headerTitle}>Four Seasons</h1>
+    <div className="h-screen w-screen flex flex-col bg-[#f0fdf4] font-sans text-slate-900 overflow-hidden">
+      <header className="bg-white/90 backdrop-blur-md p-4 px-6 border-b border-emerald-100 flex justify-between items-center z-[1000] sticky top-0">
+        <div className="flex items-center gap-2">
+          <div className="bg-emerald-600 p-2 rounded-xl text-white shadow-lg"><Navigation size={18} fill="currentColor"/></div>
+          <h1 className="text-sm font-black text-slate-800 uppercase tracking-tighter">Four Seasons</h1>
         </div>
-        <div style={styles.headerUser}>{nickname} 활동가</div>
+        <div className="flex items-center gap-3">
+          <div className="bg-emerald-100 px-3 py-1.5 rounded-full font-bold text-[11px] text-emerald-700">{nickname} 활동가</div>
+          <button onClick={handleLogout} className="p-2 bg-slate-100 rounded-xl text-slate-400 active:bg-slate-200 transition-colors shadow-sm"><LogOut size={16}/></button>
+        </div>
       </header>
 
-      <main style={styles.mainContent}>
-        {/* 탭 1: 지도 (홈 화면) */}
-        <div style={{...styles.tabView, opacity: activeTab === 'map' ? 1 : 0, zIndex: activeTab === 'map' ? 10 : 0}}>
-          <div ref={mapContainerRef} style={{width: '100%', height: '100%'}} />
-          <div style={styles.floatingPanel}>
-            <div style={styles.statsRow}>
-               <div style={{display: 'flex', gap: '20px', paddingLeft: '10px'}}>
-                 <div style={{textAlign: 'center'}}><p style={styles.statLabel}>Total</p><p style={styles.statValue}>{reports.length}</p></div>
-                 <div style={styles.statDivider}><p style={styles.statLabel}>Solved</p><p style={{...styles.statValue, color: '#10b981'}}>{reports.filter(r => r.status === 'solved').length}</p></div>
+      <main className="flex-1 relative">
+        {/* Tab 1: Map */}
+        <div className={`absolute inset-0 transition-opacity duration-300 ${activeTab === 'map' ? 'opacity-100 z-10' : 'opacity-0 z-0'}`}>
+          <div ref={mapContainerRef} className="w-full h-full" />
+          <div className="absolute bottom-28 left-4 right-4 z-[1001]">
+            <div className="bg-white p-5 rounded-[40px] shadow-2xl flex justify-between items-center border border-emerald-50">
+               <div className="flex gap-6 pl-4">
+                 <div className="text-center"><p className="text-[9px] font-black text-slate-300 mb-1 uppercase tracking-widest italic">Trash</p><p className="text-2xl font-black text-slate-800">{reports.length}</p></div>
+                 <div className="text-center border-l border-slate-100 pl-6"><p className="text-[9px] font-black text-slate-300 mb-1 uppercase tracking-widest italic">Solved</p><p className="text-2xl font-black text-emerald-600">{reports.filter(r => r.status === 'solved').length}</p></div>
                </div>
-               <button onClick={() => setActiveTab('add')} style={styles.recordButton}>
-                 <PlusCircle size={20}/> 기록하기
-               </button>
+               <button onClick={() => setActiveTab('add')} className="bg-slate-900 text-white px-6 py-4 rounded-[24px] text-sm font-black flex items-center gap-2 shadow-xl active:scale-90 transition-all"><PlusCircle size={20}/> 기록하기</button>
             </div>
           </div>
         </div>
 
-        {/* 탭 2: 기록 추가 (풀스크린) */}
-        <div style={{...styles.tabView, backgroundColor: '#f0fdf4', padding: '24px', overflowY: 'auto', transform: activeTab === 'add' ? 'translateY(0)' : 'translateY(100%)', transition: 'transform 0.4s ease', zIndex: 50}}>
-          <div style={{maxWidth: '400px', margin: '0 auto'}}>
-            <div style={styles.formHeader}>
-              <h2 style={styles.formTitle}>New Record</h2>
-              <button onClick={() => setActiveTab('map')} style={styles.closeButton}><X/></button>
-            </div>
-            <form onSubmit={handleSave} style={{display: 'flex', flexDirection: 'column', gap: '20px'}}>
-              <div style={styles.reportRow}>
-                <div style={styles.gpsCard}>
-                  <span style={styles.gpsLabel}><MapPin size={14}/> GPS 위치</span>
-                  <button type="button" onClick={getGPS} style={{...styles.gpsBtn, backgroundColor: formData.customLocation ? '#10b981' : 'white', color: formData.customLocation ? 'white' : '#1a202c'}}>
-                    {isLocating ? "수신 중..." : formData.customLocation ? "위치 획득 완료" : "내 위치 잡기"}
-                  </button>
+        {/* Tab 2: New Record */}
+        <div className={`absolute inset-0 bg-[#f0fdf4] p-6 overflow-y-auto z-50 transition-transform duration-500 ${activeTab === 'add' ? 'translate-y-0' : 'translate-y-full'}`}>
+          <div className="max-w-md mx-auto pb-32">
+            <div className="flex justify-between items-center mb-10"><h2 className="text-2xl font-black text-slate-800 italic uppercase tracking-tight">New Record</h2><button onClick={() => setActiveTab('map')} className="p-3 bg-white rounded-2xl text-slate-300 shadow-sm"><X/></button></div>
+            <form onSubmit={handleSave} className="space-y-6">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="bg-slate-900 p-6 rounded-[32px] text-white flex flex-col justify-between shadow-xl min-h-[140px]">
+                  <span className="text-[10px] font-black text-emerald-400 uppercase tracking-widest mb-2"><MapPin size={14}/> GPS Location</span>
+                  <button type="button" onClick={getGPS} className={`px-4 py-3 rounded-2xl text-[10px] font-black transition-all ${formData.customLocation ? 'bg-emerald-500 text-white' : 'bg-white text-slate-900'}`}>{isLocating ? <Loader2 className="animate-spin" size={14}/> : "위치 잡기"}</button>
                 </div>
-                <div style={styles.photoBox}>
-                  <input type="file" accept="image/*" onChange={handleImageChange} style={{display: 'none'}} id="photo-upload" />
-                  <label htmlFor="photo-upload" style={{...styles.photoLabel, borderColor: formData.image ? '#10b981' : '#a7f3d0'}}>
-                    {formData.image ? <img src={formData.image} style={styles.previewImg} /> : (
-                      <div style={{textAlign: 'center'}}>
-                        <Camera size={24} color="#10b981" style={{marginBottom: '4px'}}/>
-                        <div style={{fontSize: '10px', color: '#059669', fontWeight: '900'}}>사진 추가</div>
-                      </div>
-                    )}
+                <div className="relative">
+                  <input type="file" accept="image/*" onChange={(e) => {
+                    const reader = new FileReader();
+                    reader.onload = () => setFormData({...formData, image: reader.result});
+                    reader.readAsDataURL(e.target.files[0]);
+                  }} className="hidden" id="photo" />
+                  <label htmlFor="photo" className={`cursor-pointer w-full h-[140px] rounded-[32px] border-2 border-dashed flex flex-col items-center justify-center gap-2 bg-white transition-all ${formData.image ? 'border-emerald-500' : 'border-emerald-100'}`}>
+                    {formData.image ? <img src={formData.image} className="w-full h-full object-cover rounded-[30px]" /> : <Camera size={24} className="text-emerald-500"/>}
                   </label>
                 </div>
               </div>
 
-              <div style={styles.categoryGrid}>
+              {formData.image && (
+                <button type="button" onClick={analyzeImage} disabled={isAnalyzing} className="w-full bg-emerald-100 text-emerald-700 font-black py-5 rounded-[28px] flex items-center justify-center gap-2 border border-emerald-200 active:scale-95 transition-all shadow-md shadow-emerald-200/50">
+                  {isAnalyzing ? <Loader2 className="animate-spin" size={18}/> : <Sparkles size={18}/>}
+                  {isAnalyzing ? "AI 분석 중..." : "AI 쓰레기 자동 분석"}
+                </button>
+              )}
+
+              <div className="grid grid-cols-2 gap-3">
                 {TRASH_CATEGORIES.map(c => (
-                  <button key={c.id} type="button" onClick={() => setFormData({...formData, category: c.id})} style={{...styles.catBtn, borderColor: formData.category === c.id ? '#10b981' : 'transparent', backgroundColor: formData.category === c.id ? 'white' : 'rgba(255,255,255,0.4)'}}>
-                    <span style={{fontSize: '22px'}}>{c.icon}</span>
-                    <span style={{fontSize: '11px', fontWeight: '900', color: formData.category === c.id ? '#065f46' : '#94a3b8'}}>{c.label}</span>
+                  <button key={c.id} type="button" onClick={() => setFormData({...formData, category: c.id})} className={`p-4 rounded-3xl border-2 flex items-center gap-4 transition-all ${formData.category === c.id ? 'border-emerald-500 bg-white text-emerald-700 shadow-md' : 'border-transparent bg-white text-slate-400 opacity-60'}`}>
+                    <span className="text-2xl">{c.icon}</span><span className="text-xs font-black">{c.label}</span>
                   </button>
                 ))}
               </div>
-
-              <select value={formData.area} onChange={e => setFormData({...formData, area: e.target.value})} style={styles.selectInput}>
-                {GEUMJEONG_AREAS.map(a => <option key={a}>{a}</option>)}
-              </select>
-
-              <textarea value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})} placeholder="어떤 상황인가요? (예: 일회용 컵 5개 방치됨)" style={styles.textArea} />
-              
-              <button style={styles.saveButton}>지도로 공유하기</button>
+              <textarea value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})} placeholder="어떤 상황인가요?" className="w-full p-6 bg-white rounded-[32px] h-36 text-sm font-medium outline-none border border-emerald-50 focus:ring-2 ring-emerald-400 shadow-sm" />
+              <button className="w-full bg-emerald-600 text-white font-black py-6 rounded-[32px] shadow-2xl text-lg active:scale-95 transition-all">지도에 업로드</button>
             </form>
           </div>
         </div>
 
-        {/* 탭 3: 팀 아카이브 (풀스크린) */}
-        <div style={{...styles.tabView, backgroundColor: '#f0fdf4', padding: '24px', overflowY: 'auto', transform: activeTab === 'list' ? 'translateX(0)' : 'translateX(100%)', transition: 'transform 0.4s ease', zIndex: 20}}>
-          <div style={{maxWidth: '400px', margin: '0 auto'}}>
-            <div style={styles.formHeader}>
-              <h2 style={styles.formTitle}>Team Archive</h2>
-              <button onClick={() => setActiveTab('map')} style={styles.closeButton}><X/></button>
-            </div>
-            <p style={{fontSize: '12px', color: '#94a3b8', marginBottom: '24px', fontWeight: 'bold'}}>우리 팀의 활동 현황을 큰 화면으로 확인하세요.</p>
-            {reports.length === 0 ? (
-              <div style={{textAlign: 'center', padding: '80px 0', color: '#cbd5e1', fontWeight: '900'}}>아직 등록된 기록이 없습니다.</div>
-            ) : reports.map(r => (
-              <div key={r.id} style={styles.feedCard}>
-                <div style={styles.feedHeader}>
-                  <div style={{display: 'flex', alignItems: 'center', gap: '12px'}}>
-                    <span style={styles.feedIconBox}>{TRASH_CATEGORIES.find(c => c.id === r.category)?.icon}</span>
-                    <div>
-                      <h4 style={{fontSize: '15px', fontWeight: '900', margin: 0}}>{TRASH_CATEGORIES.find(c => c.id === r.category)?.label}</h4>
-                      <p style={{fontSize: '10px', color: '#94a3b8', margin: 0}}>{new Date(r.discoveredTime).toLocaleString()}</p>
-                    </div>
+        {/* Tab 3: Feed */}
+        <div className={`absolute inset-0 bg-[#f0fdf4] p-6 overflow-y-auto z-20 transition-transform duration-500 ${activeTab === 'list' ? 'translate-x-0' : 'translate-x-full'}`}>
+          <div className="max-w-md mx-auto pb-32">
+            <div className="flex justify-between items-center mb-10"><h2 className="text-2xl font-black text-slate-800 italic uppercase">Team Feed</h2><button onClick={() => setActiveTab('map')} className="p-3 bg-white rounded-2xl text-slate-300 shadow-sm"><X/></button></div>
+            {reports.length === 0 ? <div className="text-center py-20 font-bold text-slate-300">아직 기록이 없습니다.</div> : reports.map(r => (
+              <div key={r.id} className="bg-white p-6 rounded-[40px] mb-6 shadow-md border border-emerald-50 overflow-hidden relative">
+                <div className="flex justify-between items-start mb-4">
+                  <div className="flex items-center gap-3"><span className="text-3xl p-2 bg-emerald-50 rounded-2xl">{TRASH_CATEGORIES.find(c => c.id === r.category)?.icon}</span>
+                    <div><h4 className="font-black text-slate-800 text-sm">{TRASH_CATEGORIES.find(c => c.id === r.category)?.label}</h4><p className="text-[10px] font-bold text-slate-400 uppercase">{new Date(r.discoveredTime).toLocaleString()}</p></div>
                   </div>
-                  <button onClick={() => set(ref(db, `reports/${r.id}/status`), r.status === 'pending' ? 'solved' : 'pending')} style={{...styles.solvedBtn, backgroundColor: r.status === 'solved' ? '#10b981' : '#f1f5f9', color: r.status === 'solved' ? 'white' : '#94a3b8'}}>
-                    {r.status === 'solved' ? '해결 완료' : '진행중'}
-                  </button>
+                  <button onClick={() => toggleStatus(r)} className={`px-4 py-2 rounded-2xl text-[10px] font-black transition-all ${r.status === 'solved' ? 'bg-emerald-600 text-white shadow-lg' : 'bg-slate-100 text-slate-400'}`}>{r.status === 'solved' ? '해결됨 ✓' : '진행중'}</button>
                 </div>
-                {r.image && <img src={r.image} style={styles.feedImg} alt="현장 사진" />}
-                <p style={styles.feedDesc}>{r.description || "상세 설명이 없습니다."}</p>
-                <div style={styles.feedFooter}>
-                  <span style={{color: r.userName === nickname ? '#10b981' : '#4b5563', fontSize: '12px'}}>👤 {r.userName} {r.userName === nickname ? '(나)' : ''}</span>
-                  <div style={{display: 'flex', alignItems: 'center', gap: '10px'}}>
-                    <span style={styles.feedAreaBadge}>{r.area}</span>
-                    {r.userName === nickname && (
-                      <button 
-                        onClick={() => setShowDeleteModal(r.id)} 
-                        style={{border: 'none', background: 'none', color: '#ef4444', padding: '5px', cursor: 'pointer'}}
-                      >
-                        <Trash2 size={18} />
-                      </button>
-                    )}
+                {r.image && <img src={r.image} className="w-full h-56 object-cover rounded-[32px] mb-4 shadow-inner border border-emerald-50" />}
+                <p className="text-sm font-medium text-slate-600 bg-emerald-50/50 p-5 rounded-[28px] italic leading-relaxed border-l-4 border-emerald-400 shadow-sm">{r.description || "설명 없음"}</p>
+                <div className="flex items-center justify-between pt-4 border-t border-emerald-50 mt-4">
+                  <span className="text-[11px] font-black text-slate-600 flex items-center gap-1"><User size={12}/> {r.userName} 활동가</span>
+                  <div className="flex gap-2 items-center">
+                    <span className="text-[9px] bg-emerald-50 text-emerald-600 px-3 py-1.5 rounded-full font-black border border-emerald-100 uppercase tracking-widest">{r.area}</span>
+                    {r.userName === nickname && <button onClick={() => handleDelete(r.id)} className="text-red-300 p-2 hover:text-red-500 transition-colors"><Trash2 size={16}/></button>}
                   </div>
                 </div>
               </div>
@@ -356,177 +456,79 @@ export default function App() {
           </div>
         </div>
 
-        {/* 탭 4: 통계 (풀스크린 & 복귀 버튼 추가) */}
-        <div style={{...styles.tabView, backgroundColor: '#f0fdf4', padding: '24px', overflowY: 'auto', transform: activeTab === 'stats' ? 'translateX(0)' : 'translateX(-100%)', transition: 'transform 0.4s ease', zIndex: 30}}>
-           <div style={{maxWidth: '400px', margin: '0 auto'}}>
-            <div style={styles.formHeader}>
-              <h2 style={styles.formTitle}>Team Stats</h2>
-              <button onClick={() => setActiveTab('map')} style={styles.closeButton}><X/></button>
-            </div>
+        {/* Tab 4: Stats */}
+        <div className={`absolute inset-0 bg-[#f0fdf4] p-6 overflow-y-auto z-30 transition-transform duration-500 ${activeTab === 'stats' ? 'translate-x-0' : 'translate-x-full'}`}>
+           <div className="max-w-md mx-auto pb-32">
+            <div className="flex justify-between items-center mb-10"><h2 className="text-2xl font-black text-slate-800 italic uppercase">Team Stats</h2><button onClick={() => setActiveTab('map')} className="p-3 bg-white rounded-2xl text-slate-300 shadow-sm"><X/></button></div>
             
-            <div style={styles.statsMainCard}>
-               <Award size={48} color="#10b981" style={{marginBottom: '16px'}}/>
-               <p style={{fontSize: '14px', fontWeight: 'bold', color: '#64748b', marginBottom: '8px'}}>금정구 환경 수호 프로젝트</p>
-               <h3 style={{fontSize: '32px', fontWeight: '900', color: '#1f2937', marginBottom: '24px'}}>성공률 {solvedRate}%</h3>
-               
-               <div style={styles.statsGrid}>
-                  <div style={styles.statBox}>
-                    <span style={styles.statBoxLabel}>발견됨</span>
-                    <span style={styles.statBoxValue}>{totalReports}건</span>
+            <div className="bg-slate-900 rounded-[40px] p-8 text-white mb-8 shadow-2xl relative overflow-hidden">
+               <div className="absolute top-0 right-0 p-4 opacity-10"><Zap size={120} fill="white"/></div>
+               <div className="flex items-center gap-2 text-emerald-400 text-[10px] font-black uppercase tracking-[0.3em] mb-4">
+                 <Sparkles size={14}/> AI Eco Counselor
+               </div>
+               <p className="text-xl font-bold leading-relaxed italic relative z-10">
+                 {isGeneratingMsg ? "AI가 지도를 분석하고 있습니다..." : `"${aiMessage}"`}
+               </p>
+               <div className="mt-8">
+                  <div className="flex justify-between mb-2">
+                    <span className="text-[10px] font-black text-emerald-400 uppercase tracking-widest">Clean Achievement</span>
+                    <span className="text-[10px] font-black text-emerald-400">{reports.length > 0 ? Math.round((reports.filter(r => r.status === 'solved').length / reports.length) * 100) : 0}%</span>
                   </div>
-                  <div style={styles.statBox}>
-                    <span style={styles.statBoxLabel}>해결됨</span>
-                    <span style={{...styles.statBoxValue, color: '#10b981'}}>{solvedReports}건</span>
+                  <div className="h-1.5 w-full bg-emerald-900/50 rounded-full overflow-hidden">
+                    <div className="h-full bg-emerald-400 transition-all duration-1000" style={{width: `${reports.length > 0 ? (reports.filter(r => r.status === 'solved').length / reports.length) * 100 : 0}%`}}></div>
                   </div>
                </div>
             </div>
 
-            <div style={{marginTop: '32px'}}>
-               <h4 style={{fontSize: '16px', fontWeight: '900', color: '#1f2937', marginBottom: '16px'}}>카테고리별 현황</h4>
-               <div style={{display: 'flex', flexDirection: 'column', gap: '12px'}}>
-                  {TRASH_CATEGORIES.map(cat => {
-                    const count = reports.filter(r => r.category === cat.id).length;
-                    const percent = totalReports > 0 ? (count / totalReports) * 100 : 0;
-                    return (
-                      <div key={cat.id} style={styles.progressRow}>
-                        <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: '6px'}}>
-                          <span style={{fontSize: '13px', fontWeight: 'bold'}}>{cat.icon} {cat.label}</span>
-                          <span style={{fontSize: '12px', fontWeight: '900', color: '#64748b'}}>{count}건</span>
-                        </div>
-                        <div style={styles.progressBarBg}>
-                           <div style={{...styles.progressBarFill, width: `${percent}%`, backgroundColor: cat.color}}></div>
-                        </div>
-                      </div>
-                    )
-                  })}
+            <div className="grid grid-cols-2 gap-4 mb-10">
+               <div className="bg-white p-7 rounded-[32px] shadow-md border border-emerald-50 text-center">
+                 <p className="text-[10px] font-black text-slate-300 mb-2 uppercase italic tracking-widest">Reports</p>
+                 <p className="text-4xl font-black text-slate-800 tracking-tighter">{reports.length}</p>
+               </div>
+               <div className="bg-white p-7 rounded-[32px] shadow-md border border-emerald-50 text-center">
+                 <p className="text-[10px] font-black text-slate-300 mb-2 uppercase italic tracking-widest">Solved</p>
+                 <p className="text-4xl font-black text-emerald-600 tracking-tighter">{reports.filter(r => r.status === 'solved').length}</p>
                </div>
             </div>
-            
-            <button onClick={() => setActiveTab('map')} style={styles.statsReturnBtn}>
-               <MapPin size={18}/> 지도로 돌아가기
-            </button>
+
+            <h4 className="text-lg font-black mb-6 flex items-center gap-2 text-slate-800 italic uppercase">Trash Analytics <Award size={18} className="text-emerald-500"/></h4>
+            <div className="space-y-4">
+              {TRASH_CATEGORIES.map(cat => {
+                const count = reports.filter(r => r.category === cat.id).length;
+                const percent = reports.length > 0 ? (count / reports.length) * 100 : 0;
+                return (
+                  <div key={cat.id} className="bg-white p-5 rounded-[28px] shadow-sm border border-emerald-50">
+                    <div className="flex justify-between items-center mb-3">
+                      <span className="font-bold text-sm flex items-center gap-2">{cat.icon} {cat.label}</span>
+                      <span className="text-xs font-black text-slate-400">{count}건</span>
+                    </div>
+                    <div className="h-2 bg-slate-50 rounded-full overflow-hidden">
+                      <div className="h-full transition-all duration-1000" style={{width: `${percent}%`, backgroundColor: cat.color}}></div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
            </div>
         </div>
       </main>
 
-      {/* 삭제 확인 모달 */}
-      {showDeleteModal && (
-        <div style={styles.modalOverlay}>
-          <div style={styles.modalContent}>
-            <AlertTriangle size={40} color="#ef4444" style={{marginBottom: '16px'}}/>
-            <p style={{fontWeight: '900', fontSize: '18px', marginBottom: '10px'}}>기록 삭제</p>
-            <p style={{fontSize: '14px', color: '#64748b', marginBottom: '24px'}}>이 소중한 기록을 정말 지울까요?</p>
-            <div style={{display: 'flex', gap: '10px', width: '100%'}}>
-              <button onClick={() => setShowDeleteModal(null)} style={{...styles.modalBtn, backgroundColor: '#f1f5f9', color: '#64748b'}}>취소</button>
-              <button onClick={() => handleDelete(showDeleteModal)} style={{...styles.modalBtn, backgroundColor: '#ef4444', color: 'white'}}>삭제</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 하단 내비게이션 바 */}
-      <nav style={styles.navbar}>
-        <button onClick={() => setActiveTab('map')} style={{...styles.navBtn, color: activeTab === 'map' ? '#10b981' : '#cbd5e1'}}>
-          <MapPin size={26} fill={activeTab === 'map' ? '#10b981' : 'none'}/>
-          <span style={{fontSize: '10px', fontWeight: '900', marginTop: '4px'}}>지도</span>
+      <nav className="bg-white/95 backdrop-blur-2xl border-t border-emerald-50 p-6 pb-10 flex justify-around items-center z-[2000] sticky bottom-0 shadow-[0_-15px_35px_rgba(16,185,129,0.08)]">
+        <button onClick={() => setActiveTab('map')} className={`flex flex-col items-center gap-1.5 transition-all ${activeTab === 'map' ? 'text-emerald-600 scale-110' : 'text-slate-300'}`}>
+          <MapPin size={26} fill={activeTab === 'map' ? 'currentColor' : 'none'} strokeWidth={activeTab === 'map' ? 3 : 2}/>
+          <span className="text-[10px] font-black uppercase tracking-tighter">Map</span>
         </button>
-        <button onClick={() => setActiveTab('list')} style={{...styles.navBtn, color: activeTab === 'list' ? '#10b981' : '#cbd5e1'}}>
-          <List size={26}/>
-          <span style={{fontSize: '10px', fontWeight: '900', marginTop: '4px'}}>아카이브</span>
+        <button onClick={() => setActiveTab('list')} className={`flex flex-col items-center gap-1.5 transition-all ${activeTab === 'list' ? 'text-emerald-600 scale-110' : 'text-slate-300'}`}>
+          <List size={26} strokeWidth={activeTab === 'list' ? 3 : 2}/>
+          <span className="text-[10px] font-black uppercase tracking-tighter">Feed</span>
         </button>
-        <button onClick={() => setActiveTab('stats')} style={{...styles.navBtn, color: activeTab === 'stats' ? '#10b981' : '#cbd5e1'}}>
-          <BarChart3 size={26}/>
-          <span style={{fontSize: '10px', fontWeight: '900', marginTop: '4px'}}>통계</span>
+        <button onClick={() => setActiveTab('stats')} className={`flex flex-col items-center gap-1.5 transition-all ${activeTab === 'stats' ? 'text-emerald-600 scale-110' : 'text-slate-300'}`}>
+          <BarChart3 size={26} strokeWidth={activeTab === 'stats' ? 3 : 2}/>
+          <span className="text-[10px] font-black uppercase tracking-tighter">Stats</span>
         </button>
       </nav>
 
-      <style>{`
-        .leaflet-container { font-family: inherit; z-index: 1 !important; background: #f0fdf4; }
-        .leaflet-popup-content-wrapper { border-radius: 20px; padding: 5px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); }
-        .custom-pin { background: none; border: none; }
-        ::-webkit-scrollbar { width: 0px; background: transparent; }
-      `}</style>
+      <style>{`.leaflet-container { font-family: inherit; z-index: 1 !important; background: #f0fdf4; }.leaflet-popup-content-wrapper { border-radius: 28px; padding: 8px; box-shadow: 0 15px 35px rgba(16,185,129,0.15); border: 1px solid #f0fdf4; }.custom-pin { background: none; border: none; }::-webkit-scrollbar { width: 0px; background: transparent; }`}</style>
     </div>
   );
 }
-
-const styles = {
-  mainContainer: {
-    height: '100vh', width: '100vw', backgroundColor: '#f0fdf4',
-    display: 'flex', flexDirection: 'column', alignItems: 'center',
-    paddingTop: '10vh', padding: '24px', fontFamily: 'sans-serif'
-  },
-  logoSection: { textAlign: 'center', marginBottom: '50px' },
-  titleText: { fontSize: '42px', fontWeight: '900', color: '#2d3748', letterSpacing: '-0.05em', margin: 0 },
-  subTitleText: { color: '#10b981', fontWeight: '900', fontSize: '12px', letterSpacing: '0.4em', marginTop: '10px' },
-  card: {
-    backgroundColor: 'white', borderRadius: '50px', padding: '40px',
-    boxShadow: '0 20px 50px rgba(0,0,0,0.06)', width: '100%', maxWidth: '360px',
-    display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center'
-  },
-  cardHeading: { fontSize: '24px', fontWeight: '900', color: '#2d3748', marginBottom: '12px' },
-  cardSub: { color: '#94a3b8', fontSize: '14px', fontWeight: '500', marginBottom: '35px', lineHeight: '1.5' },
-  form: { width: '100%' },
-  inputField: {
-    width: '100%', padding: '20px', borderRadius: '25px', backgroundColor: '#ecfdf5',
-    border: 'none', outline: 'none', fontWeight: 'bold', textAlign: 'center', fontSize: '18px',
-    color: '#065f46', marginBottom: '25px'
-  },
-  submitButton: {
-    width: '100%', backgroundColor: '#10b981', color: 'white', border: 'none',
-    fontWeight: '900', padding: '20px', borderRadius: '25px', fontSize: '18px',
-    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px'
-  },
-  appRoot: { height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', fontFamily: 'sans-serif', backgroundColor: '#f0fdf4' },
-  header: { backgroundColor: 'rgba(255,255,255,0.9)', padding: '12px 20px', display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid #d1fae5', zIndex: 1000 },
-  headerIcon: { backgroundColor: '#10b981', padding: '6px', borderRadius: '10px', color: 'white' },
-  headerTitle: { fontSize: '14px', fontWeight: '900', color: '#1f2937', margin: 0 },
-  headerUser: { fontSize: '11px', fontWeight: 'bold', color: '#059669', backgroundColor: '#d1fae5', padding: '5px 12px', borderRadius: '20px' },
-  mainContent: { flex: 1, position: 'relative' },
-  tabView: { position: 'absolute', inset: 0, transition: 'all 0.4s ease-out' },
-  floatingPanel: { position: 'absolute', bottom: '110px', left: '16px', right: '16px', zIndex: 1001 },
-  statsRow: { backgroundColor: 'white', padding: '15px', borderRadius: '30px', boxShadow: '0 15px 35px rgba(0,0,0,0.1)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' },
-  statLabel: { fontSize: '8px', fontWeight: '900', color: '#94a3b8', textTransform: 'uppercase', marginBottom: '2px' },
-  statValue: { fontSize: '20px', fontWeight: '900', color: '#1f2937', margin: 0 },
-  statDivider: { borderLeft: '1px solid #f1f5f9', paddingLeft: '20px' },
-  recordButton: { backgroundColor: '#1a202c', color: 'white', padding: '14px 20px', borderRadius: '22px', border: 'none', fontWeight: '900', fontSize: '13px', display: 'flex', gap: '6px', alignItems: 'center' },
-  formHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '30px' },
-  formTitle: { fontSize: '22px', fontWeight: '900', color: '#1f2937', textTransform: 'uppercase', margin: 0 },
-  closeButton: { padding: '10px', backgroundColor: 'white', borderRadius: '14px', border: 'none', color: '#94a3b8' },
-  reportRow: { display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '12px' },
-  gpsCard: { backgroundColor: '#1a202c', padding: '20px', borderRadius: '28px', color: 'white', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', minHeight: '130px' },
-  gpsLabel: { fontSize: '10px', fontWeight: '900', color: '#10b981' },
-  gpsBtn: { padding: '10px', borderRadius: '15px', border: 'none', fontWeight: '900', fontSize: '11px' },
-  photoBox: { position: 'relative' },
-  photoLabel: { border: '2px dashed', borderRadius: '28px', height: '130px', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: 'white', cursor: 'pointer' },
-  previewImg: { width: '100%', height: '100%', objectFit: 'cover', borderRadius: '26px' },
-  categoryGrid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' },
-  catBtn: { padding: '12px', border: '2px solid', borderRadius: '22px', display: 'flex', alignItems: 'center', gap: '12px', cursor: 'pointer' },
-  selectInput: { width: '100%', padding: '16px', borderRadius: '20px', border: 'none', backgroundColor: 'white', fontSize: '13px', fontWeight: 'bold', color: '#1f2937' },
-  textArea: { width: '100%', padding: '20px', borderRadius: '28px', height: '120px', border: 'none', backgroundColor: 'white', fontSize: '14px', outline: 'none', resize: 'none' },
-  saveButton: { width: '100%', padding: '20px', backgroundColor: '#10b981', color: 'white', borderRadius: '25px', border: 'none', fontWeight: '900', fontSize: '18px' },
-  feedCard: { backgroundColor: 'white', padding: '24px', borderRadius: '40px', marginBottom: '24px', boxShadow: '0 4px 15px rgba(0,0,0,0.03)' },
-  feedHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' },
-  feedIconBox: { fontSize: '28px', padding: '8px', backgroundColor: '#f0fdf4', borderRadius: '16px' },
-  solvedBtn: { padding: '8px 16px', borderRadius: '16px', border: 'none', fontSize: '11px', fontWeight: '900' },
-  feedImg: { width: '100%', height: '220px', objectFit: 'cover', borderRadius: '32px', marginBottom: '16px' },
-  feedDesc: { fontSize: '14px', fontWeight: '500', color: '#4b5563', padding: '20px', backgroundColor: '#f0fdf4', borderRadius: '28px', borderLeft: '5px solid #10b981', lineHeight: '1.6' },
-  feedFooter: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '16px', paddingTop: '16px', borderTop: '1px solid #f0fdf4', fontWeight: 'bold' },
-  feedAreaBadge: { backgroundColor: 'white', color: '#10b981', padding: '5px 12px', borderRadius: '15px', border: '1px solid #d1fae5', fontSize: '11px' },
-  navbar: { backgroundColor: 'rgba(255,255,255,0.95)', padding: '15px 20px 30px 20px', display: 'flex', justifyContent: 'space-around', borderTop: '1px solid #d1fae5', zIndex: 2000 },
-  navBtn: { border: 'none', backgroundColor: 'transparent', display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: 'pointer', transition: 'all 0.2s' },
-  modalOverlay: { position: 'fixed', inset: 0, backgroundColor: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 3000, padding: '20px' },
-  modalContent: { backgroundColor: 'white', padding: '35px', borderRadius: '40px', width: '100%', maxWidth: '320px', textAlign: 'center' },
-  modalBtn: { flex: 1, padding: '15px', borderRadius: '20px', border: 'none', fontWeight: '900', cursor: 'pointer' },
-  
-  // 통계 전용 스타일
-  statsMainCard: { backgroundColor: 'white', borderRadius: '40px', padding: '40px 20px', textAlign: 'center', boxShadow: '0 10px 30px rgba(0,0,0,0.03)' },
-  statsGrid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' },
-  statBox: { backgroundColor: '#f8fafc', padding: '20px', borderRadius: '25px', display: 'flex', flexDirection: 'column', gap: '4px' },
-  statBoxLabel: { fontSize: '11px', fontWeight: '900', color: '#64748b', textTransform: 'uppercase' },
-  statBoxValue: { fontSize: '22px', fontWeight: '900', color: '#1f2937' },
-  progressRow: { backgroundColor: 'white', padding: '16px', borderRadius: '24px', boxShadow: '0 2px 8px rgba(0,0,0,0.02)' },
-  progressBarBg: { height: '8px', backgroundColor: '#f1f5f9', borderRadius: '4px', overflow: 'hidden' },
-  progressBarFill: { height: '100%', borderRadius: '4px', transition: 'width 1s ease-in-out' },
-  statsReturnBtn: { width: '100%', marginTop: '32px', marginBottom: '80px', padding: '20px', backgroundColor: '#1a202c', color: 'white', borderRadius: '25px', border: 'none', fontWeight: '900', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' }
-};
