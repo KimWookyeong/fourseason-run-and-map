@@ -31,15 +31,14 @@ import {
   ChevronRight, 
   Trash2, 
   LogOut, 
-  Loader2,
-  CheckCircle2
+  Loader2
 } from 'lucide-react';
 
 /**
- * [사계절 런앤맵 - 최종 안정화 버전]
- * 1. 디자인: 연초록색(#f0fdf4) 테마를 모든 화면에 강력 적용
- * 2. GPS: 고정밀 수신 및 에러 핸들링 강화 (지도 업로드 연동 해결)
- * 3. 기능: 로그아웃 및 관리자 전용 전체 삭제 포함
+ * [사계절 런앤맵 - 배경색 고정 및 업로드 해결 버전]
+ * 1. 디자인: 인라인 스타일을 사용하여 어떤 환경에서도 배경색(#f0fdf4) 강제 적용
+ * 2. 업로드: 사진 압축 및 Firestore 업로드 로직 안정화 (실패 방지)
+ * 3. 기능: 로그아웃 및 admin 전용 전체 삭제 기능 유지
  */
 
 const firebaseConfig = typeof __firebase_config !== 'undefined' 
@@ -94,7 +93,41 @@ export default function App() {
     image: null
   });
 
-  // 1. 인증 및 상태 관리
+  // --- 이미지 압축 (업로드 실패 방지를 위한 핵심 로직) ---
+  const compressImage = (base64) => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.src = base64;
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const MAX_WIDTH = 800;
+        let width = img.width;
+        let height = img.height;
+        if (width > MAX_WIDTH) {
+          height *= MAX_WIDTH / width;
+          width = MAX_WIDTH;
+        }
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL('image/jpeg', 0.7)); // 용량 대폭 압축
+      };
+    });
+  };
+
+  const handleImageChange = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      const compressed = await compressImage(event.target.result);
+      setFormData(prev => ({ ...prev, image: compressed }));
+    };
+    reader.readAsDataURL(file);
+  };
+
+  // 1. 인증 설정 (RULE 3)
   useEffect(() => {
     const initAuth = async () => {
       try {
@@ -108,7 +141,7 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // 2. 실시간 데이터 수신
+  // 2. 실시간 데이터 동기화 (RULE 1)
   useEffect(() => {
     if (!user) return;
     const reportsCollection = collection(db, 'artifacts', appId, 'public', 'data', 'reports');
@@ -121,13 +154,8 @@ export default function App() {
     return () => unsubscribe();
   }, [user, nickname]);
 
-  // 3. 라이브러리 로드
+  // 3. 지도 라이브러리 로드
   useEffect(() => {
-    if (!document.getElementById('tailwind-cdn')) {
-      const tw = document.createElement('script');
-      tw.id = 'tailwind-cdn'; tw.src = 'https://cdn.tailwindcss.com';
-      document.head.appendChild(tw);
-    }
     const link = document.createElement('link');
     link.rel = 'stylesheet'; link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
     document.head.appendChild(link);
@@ -138,16 +166,11 @@ export default function App() {
     return () => { if (leafletMap.current) leafletMap.current.remove(); };
   }, []);
 
-  // 4. 지도 렌더링
   useEffect(() => {
     if (isScriptLoaded && activeTab === 'map' && mapContainerRef.current && !leafletMap.current) {
       setTimeout(() => {
         if (!mapContainerRef.current) return;
-        leafletMap.current = window.L.map(mapContainerRef.current, { 
-          zoomControl: false, 
-          attributionControl: false,
-          maxZoom: 18
-        }).setView(GEUMJEONG_CENTER, 14);
+        leafletMap.current = window.L.map(mapContainerRef.current, { zoomControl: false, attributionControl: false }).setView(GEUMJEONG_CENTER, 14);
         window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(leafletMap.current);
         updateMarkers(reports);
       }, 300);
@@ -165,13 +188,13 @@ export default function App() {
       const iconHtml = `<div style="background-color:${cat.color}; width:32px; height:32px; border-radius:10px; border:2px solid ${isMine ? '#000' : '#fff'}; display:flex; align-items:center; justify-content:center; font-size:18px; transform:rotate(45deg); box-shadow: 0 4px 12px rgba(0,0,0,0.15);"><div style="transform:rotate(-45deg)">${cat.icon}</div></div>`;
       const icon = window.L.divIcon({ html: iconHtml, className: 'custom-pin', iconSize: [32, 32], iconAnchor: [16, 16] });
       const marker = window.L.marker([report.location.lat, report.location.lng], { icon }).addTo(leafletMap.current);
-      marker.bindPopup(`<b>${cat.icon} ${cat.label}</b><br/><small>기록: ${report.userName}</small>`);
+      marker.bindPopup(`<b>${cat.icon} ${cat.label}</b><br/><small>활동가: ${report.userName}</small>`);
       markersRef.current[report.id] = marker;
     });
   };
 
   const handleLogout = () => {
-    if (window.confirm("로그아웃 하시겠습니까?")) {
+    if (window.confirm("로그아웃하시겠습니까?")) {
       localStorage.removeItem('team_nickname');
       setNickname('');
       setIsSettingNickname(true);
@@ -183,15 +206,11 @@ export default function App() {
     e.preventDefault();
     if (!user) return alert("인증 대기 중입니다...");
     
-    // GPS 값이 없으면 지도 중심점을 대신 사용
+    // 위치 값 보정 (GPS가 없으면 지도 중심값 사용)
     let loc = formData.customLocation;
-    if (!loc) {
-      if (leafletMap.current) {
-        const center = leafletMap.current.getCenter();
-        loc = { lat: center.lat, lng: center.lng };
-      } else {
-        loc = { lat: GEUMJEONG_CENTER[0], lng: GEUMJEONG_CENTER[1] };
-      }
+    if (!loc && leafletMap.current) {
+      const center = leafletMap.current.getCenter();
+      loc = { lat: center.lat, lng: center.lng };
     }
 
     setIsUploading(true);
@@ -199,16 +218,16 @@ export default function App() {
       const reportsCollection = collection(db, 'artifacts', appId, 'public', 'data', 'reports');
       await addDoc(reportsCollection, { 
         ...formData, 
-        location: loc, 
+        location: loc || { lat: GEUMJEONG_CENTER[0], lng: GEUMJEONG_CENTER[1] }, 
         userName: nickname, 
         discoveredTime: new Date().toISOString() 
       });
       setFormData({ category: 'cup', area: GEUMJEONG_AREAS[0], description: '', status: 'pending', customLocation: null, image: null });
       setActiveTab('map');
-      alert("지도로 기록이 공유되었습니다! 🏁");
-    } catch (err) { 
+      alert("지도에 기록이 업로드되었습니다! 🏁");
+    } catch (err) {
       console.error(err);
-      alert("업로드 실패! 다시 시도해주세요."); 
+      alert("업로드 실패! 사진 용량이 크거나 인터넷이 불안정합니다.");
     } finally {
       setIsUploading(false);
     }
@@ -216,59 +235,45 @@ export default function App() {
 
   const getGPS = () => {
     setIsLocating(true);
-    if (!navigator.geolocation) {
-      alert("이 브라우저는 위치 정보를 지원하지 않습니다.");
-      setIsLocating(false);
-      return;
-    }
-    
     navigator.geolocation.getCurrentPosition(
       (pos) => {
-        const newLoc = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-        setFormData(prev => ({ ...prev, customLocation: newLoc }));
+        setFormData(prev => ({ ...prev, customLocation: { lat: pos.coords.latitude, lng: pos.coords.longitude } }));
         setIsLocating(false);
-        if (leafletMap.current) {
-          leafletMap.current.setView([newLoc.lat, newLoc.lng], 16);
-        }
+        if (leafletMap.current) leafletMap.current.setView([pos.coords.latitude, pos.coords.longitude], 16);
       },
-      (error) => { 
-        setIsLocating(false); 
-        console.error(error);
-        alert("GPS 위치를 가져올 수 없습니다. 권한 허용 여부와 GPS 설정을 확인해 주세요. (지도의 중심점으로 업로드됩니다.)"); 
-      },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+      () => { setIsLocating(false); alert("GPS를 켜거나 브라우저 권한을 확인해주세요."); },
+      { enableHighAccuracy: true, timeout: 10000 }
     );
   };
 
   const clearAllData = async () => {
     if (nickname !== 'admin') return;
-    if (window.confirm("주의! 모든 활동 기록이 영구적으로 삭제됩니다. 계속하시겠습니까?")) {
-      try {
-        const reportsCollection = collection(db, 'artifacts', appId, 'public', 'data', 'reports');
-        const snapshot = await getDocs(reportsCollection);
-        const batch = writeBatch(db);
-        snapshot.docs.forEach((doc) => batch.delete(doc.ref));
-        await batch.commit();
-        alert("모든 데이터가 성공적으로 초기화되었습니다.");
-      } catch (err) { alert("삭제 실패: " + err.message); }
+    if (window.confirm("주의! 모든 기록이 즉시 삭제됩니다. 계속하시겠습니까?")) {
+      const reportsCollection = collection(db, 'artifacts', appId, 'public', 'data', 'reports');
+      const snapshot = await getDocs(reportsCollection);
+      const batch = writeBatch(db);
+      snapshot.docs.forEach((doc) => batch.delete(doc.ref));
+      await batch.commit();
+      alert("초기화 완료!");
     }
   };
 
-  // 닉네임 입력 화면 (연초록색 바탕 디자인 강력 적용)
+  // --- 닉네임 입력 (배경색 강제 적용) ---
   if (isSettingNickname) {
     return (
-      <div className="fixed inset-0 bg-[#f0fdf4] flex flex-col items-center justify-center p-8 font-sans z-[9999]">
-        <div className="bg-emerald-600 w-24 h-24 rounded-[32px] flex items-center justify-center mb-8 shadow-2xl rotate-12">
-          <Navigation size={48} className="text-white" fill="currentColor" />
+      <div style={{ position: 'fixed', inset: 0, backgroundColor: '#f0fdf4', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '20px', zIndex: 9999 }}>
+        <div style={{ backgroundColor: '#10b981', width: '80px', height: '80px', borderRadius: '24px', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '24px', transform: 'rotate(12deg)', boxShadow: '0 10px 25px rgba(16,185,129,0.2)' }}>
+          <Navigation size={40} color="white" fill="white" />
         </div>
-        <h1 className="text-5xl font-black text-slate-800 tracking-tighter mb-2 italic uppercase text-center">Four Seasons</h1>
-        <p className="text-emerald-600 font-bold text-xs tracking-[0.4em] mb-12 uppercase">Run & Map Geumjeong</p>
-        <div className="bg-white p-10 rounded-[50px] shadow-2xl w-full max-w-sm border border-emerald-50 text-center">
-          <h2 className="text-2xl font-black text-slate-800 mb-2">반가워요 활동가님!</h2>
-          <p className="text-slate-400 text-sm mb-10 leading-relaxed">우리 팀의 실시간 지도에 합류하기 위해<br/>닉네임을 입력해 주세요.</p>
+        <h1 style={{ fontSize: '2.5rem', fontWeight: '900', color: '#1e293b', margin: '0 0 4px 0', tracking: '-0.05em' }}>FOUR SEASONS</h1>
+        <p style={{ fontSize: '0.75rem', fontWeight: '900', color: '#10b981', letterSpacing: '0.3em', marginBottom: '40px' }}>RUN & MAP GEUMJEONG</p>
+        
+        <div style={{ backgroundColor: 'white', padding: '40px', borderRadius: '40px', boxShadow: '0 20px 50px rgba(0,0,0,0.05)', width: '100%', maxWidth: '340px', textAlign: 'center' }}>
+          <h2 style={{ fontSize: '1.25rem', fontWeight: '900', color: '#1e293b', marginBottom: '10px' }}>반가워요 활동가님!</h2>
+          <p style={{ fontSize: '0.85rem', color: '#64748b', marginBottom: '32px', lineHeight: '1.6' }}>우리 팀의 실시간 지도에 합류하기 위해<br/>닉네임을 입력해 주세요.</p>
           <form onSubmit={(e) => { e.preventDefault(); if(nickname.trim()){ localStorage.setItem('team_nickname', nickname); setIsSettingNickname(false); } }}>
-            <input type="text" value={nickname} onChange={e => setNickname(e.target.value)} placeholder="닉네임 입력" className="w-full p-5 rounded-3xl bg-[#f0fdf4] border-none outline-none font-bold text-center text-xl text-emerald-800 mb-6 shadow-inner" autoFocus />
-            <button className="w-full bg-emerald-600 text-white font-black py-5 rounded-3xl shadow-xl active:scale-95 transition-all text-lg flex items-center justify-center gap-2">지도 합류하기 <ChevronRight size={20}/></button>
+            <input type="text" value={nickname} onChange={e => setNickname(e.target.value)} placeholder="예: 금정_철수" style={{ width: '100%', padding: '16px', borderRadius: '20px', backgroundColor: '#f0fdf4', border: 'none', outline: 'none', fontWeight: 'bold', textAlign: 'center', color: '#065f46', fontSize: '1.1rem', marginBottom: '24px' }} autoFocus />
+            <button style={{ width: '100%', backgroundColor: '#10b981', color: 'white', border: 'none', fontWeight: '900', borderRadius: '20px', padding: '16px', fontSize: '1.1rem', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>참여하기 <ChevronRight size={20}/></button>
           </form>
         </div>
       </div>
@@ -278,89 +283,90 @@ export default function App() {
   const solvedCount = reports.filter(r => r.status === 'solved').length;
 
   return (
-    <div className="fixed inset-0 flex flex-col bg-[#f0fdf4] font-sans text-slate-900 overflow-hidden select-none">
+    <div style={{ position: 'fixed', inset: 0, display: 'flex', flexDirection: 'column', backgroundColor: '#f0fdf4', fontFamily: '-apple-system, sans-serif' }}>
       {/* 헤더 */}
-      <header className="bg-white/95 backdrop-blur-md p-4 px-6 border-b border-emerald-100 flex justify-between items-center z-[1000] shadow-sm">
-        <div className="flex items-center gap-2">
-          <div className="bg-emerald-600 p-2 rounded-xl text-white shadow-lg shadow-emerald-200/50"><Navigation size={18} fill="currentColor"/></div>
-          <h1 className="text-sm font-black text-slate-800 uppercase tracking-tighter">Four Seasons</h1>
+      <header style={{ height: '65px', backgroundColor: 'rgba(255,255,255,0.95)', backdropFilter: 'blur(10px)', borderBottom: '1px solid #d1fae5', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 20px', zIndex: 1000 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <div style={{ backgroundColor: '#10b981', padding: '6px', borderRadius: '10px', color: 'white' }}><Navigation size={16} fill="white"/></div>
+          <span style={{ fontSize: '14px', fontWeight: '900', color: '#1e293b', letterSpacing: '-0.02em' }}>FOUR SEASONS</span>
         </div>
-        <div className="flex items-center gap-3">
-          <div className="bg-[#f0fdf4] px-4 py-1.5 rounded-full font-bold text-[11px] text-emerald-700 border border-emerald-100 shadow-sm">{nickname}</div>
-          <button onClick={handleLogout} className="p-2 bg-slate-100 rounded-xl text-slate-400 active:bg-slate-200 transition-colors shadow-sm" title="로그아웃">
-            <LogOut size={16}/>
-          </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <span style={{ backgroundColor: '#f0fdf4', color: '#047857', fontWeight: '900', fontSize: '10px', padding: '4px 12px', borderRadius: '20px', border: '1px solid #d1fae5' }}>{nickname}</span>
+          <button onClick={handleLogout} style={{ border: 'none', background: '#f1f5f9', padding: '8px', borderRadius: '10px', color: '#64748b', cursor: 'pointer' }}><LogOut size={16}/></button>
         </div>
       </header>
 
-      <main className="flex-1 relative overflow-hidden">
-        {/* Tab 1: Map */}
-        <div className={`absolute inset-0 transition-opacity duration-300 ${activeTab === 'map' ? 'opacity-100 z-10' : 'opacity-0 z-0 invisible'}`}>
-          <div ref={mapContainerRef} className="w-full h-full" />
-          <div className="absolute bottom-6 left-4 right-4 z-[1001]">
-            <div className="bg-white p-5 rounded-[40px] shadow-2xl flex justify-between items-center border border-emerald-50">
-               <div className="flex gap-6 pl-4">
-                 <div className="text-center"><p className="text-[9px] font-black text-slate-300 uppercase tracking-widest italic">Found</p><p className="text-2xl font-black text-slate-800">{reports.length}</p></div>
-                 <div className="text-center border-l border-slate-100 pl-6"><p className="text-[9px] font-black text-slate-300 uppercase tracking-widest italic">Solved</p><p className="text-2xl font-black text-emerald-600">{solvedCount}</p></div>
+      {/* 메인 탭 영역 */}
+      <main style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
+        {/* 지도 */}
+        <div style={{ position: 'absolute', inset: 0, visibility: activeTab === 'map' ? 'visible' : 'hidden', opacity: activeTab === 'map' ? 1 : 0, transition: 'opacity 0.3s' }}>
+          <div ref={mapContainerRef} style={{ width: '100%', height: '100%' }} />
+          <div style={{ position: 'absolute', bottom: '24px', left: '16px', right: '16px', zIndex: 1001 }}>
+            <div style={{ backgroundColor: 'white', padding: '16px', borderRadius: '32px', boxShadow: '0 15px 35px rgba(0,0,0,0.1)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', border: '1px solid #f0fdf4' }}>
+               <div style={{ display: 'flex', gap: '20px', paddingLeft: '10px' }}>
+                 <div style={{ textAlign: 'center' }}><p style={{ fontSize: '8px', fontWeight: '900', color: '#cbd5e1', textTransform: 'uppercase' }}>Found</p><p style={{ fontSize: '20px', fontWeight: '900', color: '#1e293b', margin: 0 }}>{reports.length}</p></div>
+                 <div style={{ borderLeft: '1px solid #f1f5f9', paddingLeft: '20px', textAlign: 'center' }}><p style={{ fontSize: '8px', fontWeight: '900', color: '#cbd5e1', textTransform: 'uppercase' }}>Solved</p><p style={{ fontSize: '20px', fontWeight: '900', color: '#10b981', margin: 0 }}>{solvedCount}</p></div>
                </div>
-               <button onClick={() => setActiveTab('add')} className="bg-slate-900 text-white px-7 py-4 rounded-[24px] text-sm font-black flex items-center gap-2 shadow-xl active:scale-90 transition-all"><PlusCircle size={20}/> 기록하기</button>
+               <button onClick={() => setActiveTab('add')} style={{ backgroundColor: '#1e293b', color: 'white', border: 'none', fontWeight: '900', borderRadius: '20px', padding: '14px 24px', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}><PlusCircle size={18}/> 기록하기</button>
             </div>
           </div>
         </div>
 
-        {/* Tab 2: New Record Overlay */}
-        <div className={`absolute inset-0 bg-[#f0fdf4] p-6 overflow-y-auto z-50 transition-transform duration-500 ${activeTab === 'add' ? 'translate-y-0' : 'translate-y-full'}`}>
-          <div className="max-w-md mx-auto pb-32">
-            <div className="flex justify-between items-center mb-10"><h2 className="text-2xl font-black text-slate-800 italic uppercase">New Record</h2><button onClick={() => setActiveTab('map')} className="p-3 bg-white rounded-2xl text-slate-300 shadow-sm"><X/></button></div>
-            <form onSubmit={handleSave} className="space-y-6">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="bg-slate-900 p-6 rounded-[32px] text-white flex flex-col justify-between shadow-xl min-h-[140px]">
-                  <span className="text-[10px] font-black text-emerald-400 uppercase tracking-widest mb-2 flex items-center gap-1"><MapPin size={14}/> Location</span>
-                  <button type="button" onClick={getGPS} className={`w-full py-3 rounded-2xl text-[11px] font-black transition-all ${formData.customLocation ? 'bg-emerald-500 text-white' : 'bg-white text-slate-900'}`}>{isLocating ? <Loader2 className="animate-spin mx-auto" size={14}/> : formData.customLocation ? "수신 완료" : "위치 잡기"}</button>
+        {/* 기록 추가 (풀스크린 오버레이) */}
+        <div style={{ position: 'absolute', inset: 0, backgroundColor: '#f0fdf4', transform: activeTab === 'add' ? 'translateY(0)' : 'translateY(100%)', transition: 'transform 0.4s cubic-bezier(0.16, 1, 0.3, 1)', zIndex: 2000, overflowY: 'auto', padding: '24px' }}>
+          <div style={{ maxWidth: '400px', margin: '0 auto', paddingBottom: '100px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '32px' }}>
+              <h2 style={{ fontSize: '1.5rem', fontWeight: '900', color: '#1e293b', margin: 0, fontStyle: 'italic' }}>NEW RECORD</h2>
+              <button onClick={() => setActiveTab('map')} style={{ border: 'none', background: 'white', padding: '10px', borderRadius: '14px', color: '#cbd5e1', cursor: 'pointer' }}><X/></button>
+            </div>
+            <form onSubmit={handleSave} style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                <div style={{ backgroundColor: '#1e293b', padding: '20px', borderRadius: '24px', color: 'white', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', minHeight: '120px' }}>
+                  <span style={{ fontSize: '10px', fontWeight: '900', color: '#10b981', display: 'flex', alignItems: 'center', gap: '4px' }}><MapPin size={12}/> GPS</span>
+                  <button type="button" onClick={getGPS} style={{ border: 'none', padding: '10px', borderRadius: '12px', fontWeight: '900', fontSize: '10px', backgroundColor: formData.customLocation ? '#10b981' : 'white', color: formData.customLocation ? 'white' : '#1e293b' }}>{isLocating ? "수신 중..." : formData.customLocation ? "수신 완료" : "위치 잡기"}</button>
                 </div>
-                <div className="relative">
-                  <input type="file" accept="image/*" onChange={(e) => { if(e.target.files[0]){ const reader = new FileReader(); reader.onload = () => setFormData({...formData, image: reader.result}); reader.readAsDataURL(e.target.files[0]); }}} className="hidden" id="photo" />
-                  <label htmlFor="photo" className={`cursor-pointer w-full h-[140px] rounded-[32px] border-2 border-dashed flex flex-col items-center justify-center gap-2 bg-white transition-all ${formData.image ? 'border-emerald-500' : 'border-emerald-100'}`}>
-                    {formData.image ? <img src={formData.image} className="w-full h-full object-cover rounded-[30px]" /> : (
-                      <div className="text-center"><Camera size={24} className="text-emerald-500 mx-auto mb-1"/><span className="text-[10px] font-black text-emerald-600">사진 추가</span></div>
-                    )}
+                <div style={{ position: 'relative' }}>
+                  <input type="file" accept="image/*" onChange={handleImageChange} style={{ display: 'none' }} id="photo-upload" />
+                  <label htmlFor="photo-upload" style={{ width: '100%', height: '120px', borderRadius: '24px', border: '2px dashed #d1fae5', background: 'white', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', overflow: 'hidden' }}>
+                    {formData.image ? <img src={formData.image} style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <><Camera size={24} color="#10b981"/><span style={{ fontSize: '10px', fontWeight: '900', color: '#10b981', marginTop: '4px' }}>사진 추가</span></>}
                   </label>
                 </div>
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
                 {TRASH_CATEGORIES.map(c => (
-                  <button key={c.id} type="button" onClick={() => setFormData({...formData, category: c.id})} className={`p-4 rounded-3xl border-2 flex items-center gap-4 transition-all ${formData.category === c.id ? 'border-emerald-500 bg-white shadow-md scale-[1.02]' : 'border-transparent bg-white/50 text-slate-400'}`}>
-                    <span className="text-2xl">{c.icon}</span><span className="text-xs font-black">{c.label}</span>
+                  <button key={c.id} type="button" onClick={() => setFormData({ ...formData, category: c.id })} style={{ padding: '14px', borderRadius: '20px', border: '2px solid', borderColor: formData.category === c.id ? '#10b981' : 'transparent', backgroundColor: 'white', display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer', transition: 'all 0.2s' }}>
+                    <span style={{ fontSize: '1.2rem' }}>{c.icon}</span><span style={{ fontSize: '11px', fontWeight: '900', color: '#1e293b' }}>{c.label}</span>
                   </button>
                 ))}
               </div>
-              <textarea value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})} placeholder="어떤 상황인가요?" className="w-full p-6 bg-white rounded-[32px] h-36 text-sm font-medium outline-none border border-emerald-50 shadow-inner resize-none" />
-              <button disabled={isUploading} className="w-full bg-emerald-600 text-white font-black py-6 rounded-[32px] shadow-2xl text-lg active:scale-95 transition-all disabled:bg-slate-400">
-                {isUploading ? <Loader2 className="animate-spin mx-auto" /> : "지도에 업로드"}
+              <textarea value={formData.description} onChange={e => setFormData({ ...formData, description: e.target.value })} placeholder="어떤 상황인가요? (예: 일회용 컵 5개 방치됨)" style={{ width: '100%', padding: '20px', borderRadius: '24px', border: 'none', background: 'white', minHeight: '100px', fontSize: '14px', outline: 'none' }} />
+              <button disabled={isUploading} style={{ backgroundColor: isUploading ? '#cbd5e1' : '#10b981', color: 'white', border: 'none', padding: '20px', borderRadius: '24px', fontWeight: '900', fontSize: '1.1rem', cursor: isUploading ? 'default' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' }}>
+                {isUploading ? <><Loader2 className="animate-spin" /> 업로드 중...</> : "지도에 업로드"}
               </button>
             </form>
           </div>
         </div>
 
-        {/* Tab 3: Feed */}
-        <div className={`absolute inset-0 bg-[#f0fdf4] p-6 overflow-y-auto z-20 transition-transform duration-500 ${activeTab === 'list' ? 'translate-x-0' : 'translate-x-full'}`}>
-          <div className="max-w-md mx-auto pb-32">
-            <div className="flex justify-between items-center mb-10"><h2 className="text-2xl font-black text-slate-800 italic uppercase tracking-tighter">Team Archive</h2><button onClick={() => setActiveTab('map')} className="p-3 bg-white rounded-2xl text-slate-300 shadow-sm"><X/></button></div>
-            {reports.length === 0 ? <div className="text-center py-20 font-bold text-slate-300 italic">아직 기록이 없습니다.</div> : reports.map(r => (
-              <div key={r.id} className="bg-white p-6 rounded-[40px] mb-6 shadow-md border border-emerald-50 overflow-hidden relative">
-                <div className="flex justify-between items-start mb-4">
-                  <div className="flex items-center gap-3"><span className="text-3xl p-2 bg-[#f0fdf4] rounded-2xl">{TRASH_CATEGORIES.find(c => c.id === r.category)?.icon}</span>
-                    <div><h4 className="font-black text-slate-800 text-[13px]">{TRASH_CATEGORIES.find(c => c.id === r.category)?.label}</h4><p className="text-[9px] font-bold text-slate-400">{new Date(r.discoveredTime).toLocaleString()}</p></div>
+        {/* 아카이브 */}
+        <div style={{ position: 'absolute', inset: 0, backgroundColor: '#f0fdf4', visibility: activeTab === 'list' ? 'visible' : 'hidden', opacity: activeTab === 'list' ? 1 : 0, transition: 'opacity 0.3s', overflowY: 'auto', padding: '24px' }}>
+          <div style={{ maxWidth: '400px', margin: '0 auto', paddingBottom: '100px' }}>
+            <h2 style={{ fontSize: '1.5rem', fontWeight: '900', color: '#1e293b', marginBottom: '32px', fontStyle: 'italic' }}>TEAM ARCHIVE</h2>
+            {reports.length === 0 ? <div style={{ textAlign: 'center', padding: '40px', color: '#94a3b8', fontWeight: 'bold' }}>아직 기록이 없습니다.</div> : reports.map(r => (
+              <div key={r.id} style={{ backgroundColor: 'white', borderRadius: '32px', padding: '20px', marginBottom: '20px', border: '1px solid #f0fdf4', boxShadow: '0 4px 15px rgba(0,0,0,0.02)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                    <span style={{ fontSize: '1.5rem', background: '#f0fdf4', padding: '8px', borderRadius: '12px' }}>{TRASH_CATEGORIES.find(c => c.id === r.category)?.icon}</span>
+                    <div><h4 style={{ margin: 0, fontWeight: '900', color: '#1e293b' }}>{TRASH_CATEGORIES.find(c => c.id === r.category)?.label}</h4><p style={{ margin: 0, fontSize: '9px', color: '#94a3b8' }}>{new Date(r.discoveredTime).toLocaleString()}</p></div>
                   </div>
-                  <button onClick={() => { updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'reports', r.id), { status: r.status === 'pending' ? 'solved' : 'pending' }); }} className={`px-4 py-2 rounded-2xl text-[10px] font-black transition-all ${r.status === 'solved' ? 'bg-emerald-600 text-white shadow-lg' : 'bg-slate-100 text-slate-400'}`}>{r.status === 'solved' ? '해결됨 ✓' : '진행중'}</button>
+                  <button onClick={() => updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'reports', r.id), { status: r.status === 'pending' ? 'solved' : 'pending' })} style={{ border: 'none', padding: '6px 14px', borderRadius: '12px', fontSize: '9px', fontWeight: '900', background: r.status === 'solved' ? '#10b981' : '#f1f5f9', color: r.status === 'solved' ? 'white' : '#94a3b8', cursor: 'pointer' }}>{r.status === 'solved' ? '해결됨 ✓' : '진행중'}</button>
                 </div>
-                {r.image && <img src={r.image} className="w-full h-56 object-cover rounded-[32px] mb-4 shadow-inner border border-emerald-50" />}
-                <p className="text-[13px] font-medium text-slate-600 bg-[#f0fdf4]/50 p-5 rounded-[28px] italic leading-relaxed border-l-4 border-emerald-400 mb-4">{r.description || "설명 없음"}</p>
-                <div className="flex items-center justify-between pt-4 border-t border-emerald-50">
-                  <span className="text-[10px] font-black text-slate-600 flex items-center gap-1"><User size={12}/> {r.userName} 활동가</span>
-                  <div className="flex gap-2 items-center">
-                    <span className="text-[9px] bg-emerald-50 text-emerald-600 px-3 py-1.5 rounded-full font-black border border-emerald-100 uppercase tracking-widest">{r.area}</span>
-                    {(r.userName === nickname || nickname === 'admin') && <button onClick={() => { if(window.confirm("기록을 삭제할까요?")) deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'reports', r.id)); }} className="text-red-300 p-2 hover:text-red-500 transition-colors"><Trash2 size={16}/></button>}
+                {r.image && <img src={r.image} style={{ width: '100%', height: '180px', objectFit: 'cover', borderRadius: '24px', marginBottom: '16px' }} />}
+                <p style={{ margin: 0, padding: '16px', background: 'rgba(16,185,129,0.05)', borderRadius: '18px', fontSize: '13px', color: '#475569', fontStyle: 'italic', borderLeft: '4px solid #10b981' }}>{r.description || "기록 내용이 없습니다."}</p>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '16px', paddingTop: '16px', borderTop: '1px solid #f8fafc' }}>
+                  <span style={{ fontSize: '10px', fontWeight: '900', color: '#64748b', display: 'flex', alignItems: 'center', gap: '4px' }}><User size={10}/> {r.userName}</span>
+                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                    <span style={{ background: '#ecfdf5', color: '#10b981', padding: '4px 12px', borderRadius: '10px', fontSize: '9px', fontWeight: '900' }}>{r.area}</span>
+                    {(r.userName === nickname || nickname === 'admin') && <button onClick={() => { if(window.confirm("삭제하시겠습니까?")) deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'reports', r.id)); }} style={{ border: 'none', background: 'none', color: '#fca5a5', cursor: 'pointer' }}><Trash2 size={16}/></button>}
                   </div>
                 </div>
               </div>
@@ -368,64 +374,51 @@ export default function App() {
           </div>
         </div>
 
-        {/* Tab 4: Stats */}
-        <div className={`absolute inset-0 bg-[#f0fdf4] p-6 overflow-y-auto z-30 transition-transform duration-500 ${activeTab === 'stats' ? 'translate-x-0' : 'translate-x-full'}`}>
-           <div className="max-w-md mx-auto pb-32">
-            <div className="flex justify-between items-center mb-10"><h2 className="text-2xl font-black text-slate-800 italic uppercase">Team Stats</h2><button onClick={() => setActiveTab('map')} className="p-3 bg-white rounded-2xl text-slate-300 shadow-sm"><X/></button></div>
-            
-            <div className="bg-slate-900 rounded-[40px] p-8 text-white mb-8 shadow-2xl relative overflow-hidden">
-               <div className="absolute top-0 right-0 p-4 opacity-10"><BarChart3 size={120} fill="white"/></div>
-               <div className="flex items-center gap-2 text-emerald-400 text-[10px] font-black uppercase tracking-widest mb-4">TEAM ACHIEVEMENT</div>
-               <h3 className="text-4xl font-black mb-1 tracking-tighter">{reports.length > 0 ? Math.round((solvedCount / reports.length) * 100) : 0}%</h3>
-               <p className="text-slate-400 text-xs font-medium italic">우리 팀의 활약으로 지구가 조금씩 더 깨끗해지고 있어요!</p>
+        {/* 통계 */}
+        <div style={{ position: 'absolute', inset: 0, backgroundColor: '#f0fdf4', visibility: activeTab === 'stats' ? 'visible' : 'hidden', opacity: activeTab === 'stats' ? 1 : 0, transition: 'opacity 0.3s', overflowY: 'auto', padding: '24px' }}>
+          <div style={{ maxWidth: '400px', margin: '0 auto', paddingBottom: '100px' }}>
+            <h2 style={{ fontSize: '1.5rem', fontWeight: '900', color: '#1e293b', marginBottom: '32px', fontStyle: 'italic' }}>TEAM STATS</h2>
+            <div style={{ backgroundColor: '#1e293b', borderRadius: '32px', padding: '32px', color: 'white', textAlign: 'center', marginBottom: '24px', boxShadow: '0 20px 40px rgba(0,0,0,0.1)' }}>
+               <h3 style={{ fontSize: '3rem', fontWeight: '900', margin: '0 0 8px 0' }}>{solvedCount}</h3>
+               <p style={{ fontSize: '0.8rem', fontWeight: '900', color: '#10b981', textTransform: 'uppercase', letterSpacing: '0.1em' }}>Cleaned Up!</p>
             </div>
-
-            <div className="grid grid-cols-2 gap-4 mb-8">
-               <div className="bg-white p-8 rounded-[35px] border border-emerald-50 text-center shadow-sm">
-                 <p className="text-[9px] font-black text-slate-300 mb-1 uppercase tracking-widest">Total Found</p>
-                 <p className="text-4xl font-black text-slate-800">{reports.length}</p>
-               </div>
-               <div className="bg-white p-8 rounded-[35px] border border-emerald-50 text-center shadow-sm">
-                 <p className="text-[9px] font-black text-slate-300 mb-1 uppercase tracking-widest">Team Solved</p>
-                 <p className="text-4xl font-black text-emerald-600">{solvedCount}</p>
-               </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+              <div style={{ background: 'white', padding: '24px', borderRadius: '24px', textAlign: 'center' }}><p style={{ margin: 0, fontSize: '9px', fontWeight: '900', color: '#cbd5e1' }}>TOTAL FOUND</p><p style={{ margin: '8px 0 0 0', fontSize: '24px', fontWeight: '900', color: '#1e293b' }}>{reports.length}</p></div>
+              <div style={{ background: 'white', padding: '24px', borderRadius: '24px', textAlign: 'center' }}><p style={{ margin: 0, fontSize: '9px', fontWeight: '900', color: '#cbd5e1' }}>SUCCESS RATE</p><p style={{ margin: '8px 0 0 0', fontSize: '24px', fontWeight: '900', color: '#10b981' }}>{reports.length > 0 ? Math.round((solvedCount / reports.length) * 100) : 0}%</p></div>
             </div>
-
             {nickname === 'admin' && (
-              <div className="mt-10 p-8 bg-white rounded-[40px] border-2 border-dashed border-red-100">
-                <h4 className="text-red-700 font-black mb-2 flex items-center gap-2"><AlertTriangle size={18}/> 관리자 전용 도구</h4>
-                <p className="text-slate-400 text-[11px] mb-6 font-medium">데이터를 한꺼번에 지우려면 아래 버튼을 누르세요.</p>
-                <button onClick={clearAllData} className="w-full bg-red-500 text-white font-black py-5 rounded-3xl shadow-xl active:bg-red-600 transition-all flex items-center justify-center gap-2">
-                   기록 전체 초기화
-                </button>
+              <div style={{ marginTop: '40px', padding: '32px', background: 'white', borderRadius: '32px', border: '2px dashed #fee2e2', textAlign: 'center' }}>
+                <h4 style={{ color: '#ef4444', fontWeight: '900', margin: '0 0 10px 0' }}><AlertTriangle size={18}/> 관리자 도구</h4>
+                <p style={{ fontSize: '0.8rem', color: '#94a3b8', marginBottom: '24px' }}>모든 활동 기록을 초기화할 수 있습니다.</p>
+                <button onClick={clearAllData} style={{ width: '100%', background: '#ef4444', color: 'white', border: 'none', padding: '16px', borderRadius: '16px', fontWeight: '900', cursor: 'pointer' }}>데이터 전체 삭제</button>
               </div>
             )}
-           </div>
+          </div>
         </div>
       </main>
 
-      <nav className="bg-white/95 backdrop-blur-2xl border-t border-emerald-100 p-6 pb-10 flex justify-around items-center z-[2000] shadow-[0_-10px_30px_rgba(0,0,0,0.03)]">
-        <button onClick={() => setActiveTab('map')} className={`flex flex-col items-center gap-1.5 transition-all ${activeTab === 'map' ? 'text-emerald-600 scale-110' : 'text-slate-300'}`}>
-          <MapPin size={26} fill={activeTab === 'map' ? 'currentColor' : 'none'} strokeWidth={3}/>
-          <span className="text-[10px] font-black uppercase tracking-tighter">Map</span>
+      {/* 하단 내비게이션 */}
+      <nav style={{ height: '80px', backgroundColor: 'white', borderTop: '1px solid #d1fae5', display: 'flex', justifyContent: 'space-around', alignItems: 'center', paddingBottom: '15px' }}>
+        <button onClick={() => setActiveTab('map')} style={{ border: 'none', background: 'none', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', cursor: 'pointer', transition: 'transform 0.2s', transform: activeTab === 'map' ? 'scale(1.1)' : 'scale(1)' }}>
+          <MapPin size={24} color={activeTab === 'map' ? '#10b981' : '#cbd5e1'} fill={activeTab === 'map' ? '#10b981' : 'none'} strokeWidth={3}/>
+          <span style={{ fontSize: '9px', fontWeight: '900', color: activeTab === 'map' ? '#10b981' : '#cbd5e1' }}>MAP</span>
         </button>
-        <button onClick={() => setActiveTab('list')} className={`flex flex-col items-center gap-1.5 transition-all ${activeTab === 'list' ? 'text-emerald-600 scale-110' : 'text-slate-300'}`}>
-          <List size={26} strokeWidth={3}/>
-          <span className="text-[10px] font-black uppercase tracking-tighter">Feed</span>
+        <button onClick={() => setActiveTab('list')} style={{ border: 'none', background: 'none', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', cursor: 'pointer', transition: 'transform 0.2s', transform: activeTab === 'list' ? 'scale(1.1)' : 'scale(1)' }}>
+          <List size={24} color={activeTab === 'list' ? '#10b981' : '#cbd5e1'} strokeWidth={3}/>
+          <span style={{ fontSize: '9px', fontWeight: '900', color: activeTab === 'list' ? '#10b981' : '#cbd5e1' }}>FEED</span>
         </button>
-        <button onClick={() => setActiveTab('stats')} className={`flex flex-col items-center gap-1.5 transition-all ${activeTab === 'stats' ? 'text-emerald-600 scale-110' : 'text-slate-300'}`}>
-          <BarChart3 size={26} strokeWidth={3}/>
-          <span className="text-[10px] font-black uppercase tracking-tighter">Stats</span>
+        <button onClick={() => setActiveTab('stats')} style={{ border: 'none', background: 'none', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', cursor: 'pointer', transition: 'transform 0.2s', transform: activeTab === 'stats' ? 'scale(1.1)' : 'scale(1)' }}>
+          <BarChart3 size={24} color={activeTab === 'stats' ? '#10b981' : '#cbd5e1'} strokeWidth={3}/>
+          <span style={{ fontSize: '9px', fontWeight: '900', color: activeTab === 'stats' ? '#10b981' : '#cbd5e1' }}>STATS</span>
         </button>
       </nav>
 
       <style>{`
         .leaflet-container { z-index: 1 !important; background: #f0fdf4 !important; }
-        .leaflet-popup-content-wrapper { border-radius: 28px; padding: 8px; box-shadow: 0 15px 35px rgba(16,185,129,0.15); border: 1px solid #f0fdf4; }
         .custom-pin { background: none !important; border: none !important; }
         ::-webkit-scrollbar { width: 0px; background: transparent; }
-        input, textarea, select { font-family: inherit; }
-        body { background-color: #f0fdf4; margin: 0; padding: 0; }
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        .animate-spin { animation: spin 1s linear infinite; }
       `}</style>
     </div>
   );
