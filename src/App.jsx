@@ -35,11 +35,11 @@ import {
 } from 'lucide-react';
 
 /**
- * [사계절 런앤맵 - 인증 오류 해결 및 디자인 복구 최종본]
- * 1. 인증 해결: 업로드 시 실시간 auth 상태를 직접 체크하여 '인증 대기' 오류 방지
- * 2. 디자인: 연초록색(#f0fdf4) 테마 고정 및 첫 로그인 시 지도 즉시 로딩
- * 3. 기능: 로그아웃 버튼(상단) 및 관리자('admin') 전체 삭제 기능 유지
- * 4. 장소 선택: 기록하기 탭 내 구역 선택 메뉴 포함
+ * [사계절 런앤맵 - 오류 수정 및 무결성 최종본]
+ * 1. 오류 수정: ReferenceError(white) 해결 및 중복 스타일 키 제거
+ * 2. 로딩 해결: 로그인 직후 지도 초기화 로직 강화 (invalidateSize)
+ * 3. 디자인: 연초록색(#f0fdf4) 배경 상시 고정
+ * 4. 업로드: 이미지 자동 압축 및 구역 선택 기능 포함
  */
 
 const firebaseConfig = typeof __firebase_config !== 'undefined' 
@@ -94,7 +94,7 @@ export default function App() {
     image: null
   });
 
-  // 이미지 압축 로직
+  // 이미지 압축 로직 ( Firestore 1MB 제한 해결용 )
   const compressImage = (base64) => {
     return new Promise((resolve) => {
       const img = new Image();
@@ -111,24 +111,28 @@ export default function App() {
         canvas.width = width;
         canvas.height = height;
         const ctx = canvas.getContext('2d');
-        ctx.drawImage(img, 0, 0, width, height);
-        resolve(canvas.toDataURL('image/jpeg', 0.6));
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, width, height);
+          resolve(canvas.toDataURL('image/jpeg', 0.6));
+        }
       };
     });
   };
 
   const handleImageChange = (e) => {
-    const file = e.target.files[0];
+    const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
     reader.onload = async (event) => {
-      const compressed = await compressImage(event.target.result);
-      setFormData(prev => ({ ...prev, image: compressed }));
+      if (typeof event.target?.result === 'string') {
+        const compressed = await compressImage(event.target.result);
+        setFormData(prev => ({ ...prev, image: compressed }));
+      }
     };
     reader.readAsDataURL(file);
   };
 
-  // 1. Firebase 인증
+  // 1. Firebase 인증 및 상태 감시
   useEffect(() => {
     const initAuth = async () => {
       try {
@@ -137,10 +141,14 @@ export default function App() {
         } else {
           await signInAnonymously(auth);
         }
-      } catch (e) { console.error("Auth Error:", e); }
+      } catch (e) {
+        console.error("Auth initialization error:", e);
+      }
     };
     initAuth();
-    const unsubscribe = onAuthStateChanged(auth, setUser);
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+    });
     return () => unsubscribe();
   }, []);
 
@@ -150,9 +158,11 @@ export default function App() {
     const reportsCollection = collection(db, 'artifacts', appId, 'public', 'data', 'reports');
     const unsubscribe = onSnapshot(reportsCollection, (snapshot) => {
       const formatted = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }))
-        .sort((a, b) => new Date(b.discoveredTime) - new Date(a.discoveredTime));
+        .sort((a, b) => new Date(b.discoveredTime).getTime() - new Date(a.discoveredTime).getTime());
       setReports(formatted);
       updateMarkers(formatted);
+    }, (error) => {
+      console.error("Firestore Listen error:", error);
     });
     return () => unsubscribe();
   }, [user, nickname]);
@@ -164,12 +174,13 @@ export default function App() {
     document.head.appendChild(link);
     const script = document.createElement('script');
     script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
-    script.async = true; script.onload = () => setIsScriptLoaded(true);
+    script.async = true; 
+    script.onload = () => setIsScriptLoaded(true);
     document.head.appendChild(script);
     return () => { if (leafletMap.current) leafletMap.current.remove(); };
   }, []);
 
-  // 4. 지도 초기화 및 크기 보정
+  // 4. 지도 초기화 및 크기 보정 (첫 로드 시 잘림 방지)
   useEffect(() => {
     if (isScriptLoaded && !isSettingNickname && activeTab === 'map' && mapContainerRef.current) {
       if (!leafletMap.current) {
@@ -181,6 +192,12 @@ export default function App() {
           }).setView(GEUMJEONG_CENTER, 14);
           window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(leafletMap.current);
           updateMarkers(reports);
+          // 렌더링 완료 후 크기 재계산
+          setTimeout(() => {
+            if (leafletMap.current) {
+              leafletMap.current.invalidateSize();
+            }
+          }, 400);
         }, 300);
       } else {
         leafletMap.current.invalidateSize();
@@ -219,9 +236,19 @@ export default function App() {
 
   const handleSave = async (e) => {
     e.preventDefault();
-    // 인증 상태를 실시간으로 한 번 더 확인하여 오류 방지
-    const currentUser = auth.currentUser;
-    if (!currentUser) return alert("사용자 인증을 처리 중입니다. 잠시만 기다려 주세요.");
+    
+    // 업로드 시점에 인증이 유효한지 강제 확인 및 갱신
+    let currentUser = auth.currentUser;
+    if (!currentUser) {
+      try {
+        await signInAnonymously(auth);
+        currentUser = auth.currentUser;
+      } catch (err) {
+        return alert("사용자 인증을 완료하지 못했습니다. 인터넷 상태를 확인해 주세요.");
+      }
+    }
+    
+    if (!currentUser) return alert("사용자 인증 대기 중입니다. 잠시 후 다시 시도해 주세요.");
     
     let loc = formData.customLocation;
     if (!loc && leafletMap.current) {
@@ -240,10 +267,10 @@ export default function App() {
       });
       setFormData({ category: 'cup', area: GEUMJEONG_AREAS[0], description: '', status: 'pending', customLocation: null, image: null });
       setActiveTab('map');
-      alert("지도에 기록이 공유되었습니다! 🏁");
+      alert("지도로 기록이 성공적으로 공유되었습니다! 🏁");
     } catch (err) {
-      console.error(err);
-      alert("업로드 실패! 인터넷 연결이나 사진 용량을 확인해 주세요.");
+      console.error("Upload error:", err);
+      alert("업로드 실패! 인터넷 연결이나 파일 크기를 확인해 주세요.");
     } finally {
       setIsUploading(false);
     }
@@ -251,6 +278,11 @@ export default function App() {
 
   const getGPS = () => {
     setIsLocating(true);
+    if (!navigator.geolocation) {
+      alert("이 기기는 GPS를 지원하지 않습니다.");
+      setIsLocating(false);
+      return;
+    }
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         const coords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
@@ -260,21 +292,25 @@ export default function App() {
       },
       () => { 
         setIsLocating(false); 
-        alert("GPS 정보를 가져올 수 없습니다. 지도 중심점으로 업로드됩니다."); 
+        alert("GPS 정보를 가져올 수 없습니다. 지도 중심점 기준으로 기록됩니다."); 
       },
-      { enableHighAccuracy: true, timeout: 10000 }
+      { enableHighAccuracy: true, timeout: 8000 }
     );
   };
 
   const clearAllData = async () => {
     if (nickname !== 'admin') return;
     if (window.confirm("주의! 모든 기록을 영구적으로 삭제하시겠습니까?")) {
-      const reportsCollection = collection(db, 'artifacts', appId, 'public', 'data', 'reports');
-      const snapshot = await getDocs(reportsCollection);
-      const batch = writeBatch(db);
-      snapshot.docs.forEach((doc) => batch.delete(doc.ref));
-      await batch.commit();
-      alert("모든 데이터가 초기화되었습니다.");
+      try {
+        const reportsCollection = collection(db, 'artifacts', appId, 'public', 'data', 'reports');
+        const snapshot = await getDocs(reportsCollection);
+        const batch = writeBatch(db);
+        snapshot.docs.forEach((doc) => batch.delete(doc.ref));
+        await batch.commit();
+        alert("초기화 완료!");
+      } catch (err) {
+        console.error("Clear data error:", err);
+      }
     }
   };
 
@@ -293,7 +329,7 @@ export default function App() {
           <p style={{ fontSize: '0.85rem', color: '#64748b', marginBottom: '32px', lineHeight: '1.6' }}>우리 팀의 실시간 지도에 합류하기 위해<br/>닉네임을 입력해 주세요.</p>
           <form onSubmit={(e) => { e.preventDefault(); if(nickname.trim()){ localStorage.setItem('team_nickname', nickname); setIsSettingNickname(false); } }}>
             <input type="text" value={nickname} onChange={e => setNickname(e.target.value)} placeholder="예: 금정_철수" style={{ width: '100%', padding: '16px', borderRadius: '20px', backgroundColor: '#f0fdf4', border: 'none', outline: 'none', fontWeight: 'bold', textAlign: 'center', color: '#065f46', fontSize: '1.1rem', marginBottom: '24px' }} autoFocus />
-            <button style={{ width: '100%', backgroundColor: '#10b981', color: 'white', border: 'none', fontWeight: '900', borderRadius: '20px', padding: '16px', fontSize: '1.1rem', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>참여하기 <ChevronRight size={20}/></button>
+            <button type="submit" style={{ width: '100%', backgroundColor: '#10b981', color: 'white', border: 'none', fontWeight: '900', borderRadius: '20px', padding: '16px', fontSize: '1.1rem', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>참여하기 <ChevronRight size={20}/></button>
           </form>
         </div>
       </div>
@@ -330,8 +366,8 @@ export default function App() {
           </div>
         </div>
 
-        {/* Tab 2: 기록 추가 */}
-        <div style={{ position: 'absolute', inset: 0, backgroundColor: '#f0fdf4', transform: activeTab === 'add' ? 'translateY(0)' : 'translateY(100%)', transition: 'transform 0.4s cubic-bezier(0.16, 1, 0.3, 1)', zIndex: 2000, overflowY: 'auto', padding: '24px' }}>
+        {/* Tab 2: 기록 추가 (오버레이) */}
+        <div style={{ position: 'absolute', inset: 0, backgroundColor: '#f0fdf4', transform: activeTab === 'add' ? 'translateY(0)' : 'translateY(100%)', transition: 'transform 0.45s cubic-bezier(0.16, 1, 0.3, 1)', zIndex: 2000, overflowY: 'auto', padding: '24px' }}>
           <div style={{ maxWidth: '400px', margin: '0 auto', paddingBottom: '100px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '32px' }}>
               <h2 style={{ fontSize: '1.5rem', fontWeight: '900', color: '#1e293b', margin: 0, fontStyle: 'italic' }}>NEW RECORD</h2>
