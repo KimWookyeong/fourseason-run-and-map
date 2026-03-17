@@ -39,6 +39,7 @@ import {
  * 1. 로딩 해결: 닉네임 입력 완료(isSettingNickname 해제) 시 지도 초기화가 즉시 실행되도록 개선
  * 2. 배경색: 인라인 스타일로 배경색(#f0fdf4) 상시 고정
  * 3. 업로드: 이미지 압축 및 장소 선택 기능 완벽 포함
+ * 4. 오류 수정: 스타일 속성 중복 선언 해결
  */
 
 const firebaseConfig = typeof __firebase_config !== 'undefined' 
@@ -121,8 +122,10 @@ export default function App() {
     if (!file) return;
     const reader = new FileReader();
     reader.onload = async (event) => {
-      const compressed = await compressImage(event.target.result);
-      setFormData(prev => ({ ...prev, image: compressed }));
+      if (typeof event.target?.result === 'string') {
+        const compressed = await compressImage(event.target.result);
+        setFormData(prev => ({ ...prev, image: compressed }));
+      }
     };
     reader.readAsDataURL(file);
   };
@@ -149,7 +152,7 @@ export default function App() {
     const reportsCollection = collection(db, 'artifacts', appId, 'public', 'data', 'reports');
     const unsubscribe = onSnapshot(reportsCollection, (snapshot) => {
       const formatted = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }))
-        .sort((a, b) => new Date(b.discoveredTime) - new Date(a.discoveredTime));
+        .sort((a, b) => new Date(b.discoveredTime).getTime() - new Date(a.discoveredTime).getTime());
       setReports(formatted);
       updateMarkers(formatted);
     });
@@ -180,9 +183,8 @@ export default function App() {
           }).setView(GEUMJEONG_CENTER, 14);
           window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(leafletMap.current);
           updateMarkers(reports);
-        }, 500); // 렌더링 완료를 위한 충분한 시간 확보
+        }, 500); 
       } else {
-        // 이미 생성된 경우 지도 크기 재계산
         leafletMap.current.invalidateSize();
       }
     }
