@@ -35,11 +35,11 @@ import {
 } from 'lucide-react';
 
 /**
- * [사계절 런앤맵 - 오류 수정 및 무결성 최종본]
- * 1. 오류 수정: ReferenceError(white) 해결 및 중복 스타일 키 제거
- * 2. 로딩 해결: 로그인 직후 지도 초기화 로직 강화 (invalidateSize)
- * 3. 디자인: 연초록색(#f0fdf4) 배경 상시 고정
- * 4. 업로드: 이미지 자동 압축 및 구역 선택 기능 포함
+ * [사계절 런앤맵 - 사용자 전환 인증 오류 해결 최종본]
+ * 1. 인증 로직 개선: 닉네임 설정 버튼 클릭 시 즉시 인증을 수행하여 업로드 지연 방지
+ * 2. 지도 로딩 해결: 로그인 완료 후 지도 레이아웃을 즉시 강제 갱신
+ * 3. 디자인: 연초록색(#f0fdf4) 배경 및 깔끔한 UI 유지
+ * 4. 오류 수정: 이전 코드의 오타(white -> 'white') 및 중복 키 완전 제거
  */
 
 const firebaseConfig = typeof __firebase_config !== 'undefined' 
@@ -79,6 +79,7 @@ export default function App() {
   const [reports, setReports] = useState([]);
   const [isLocating, setIsLocating] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
   
   const mapContainerRef = useRef(null);
   const leafletMap = useRef(null);
@@ -94,7 +95,7 @@ export default function App() {
     image: null
   });
 
-  // 이미지 압축 로직 ( Firestore 1MB 제한 해결용 )
+  // 이미지 압축 로직
   const compressImage = (base64) => {
     return new Promise((resolve) => {
       const img = new Image();
@@ -132,18 +133,17 @@ export default function App() {
     reader.readAsDataURL(file);
   };
 
-  // 1. Firebase 인증 및 상태 감시
+  // 1. Firebase 인증 상태 감시
   useEffect(() => {
     const initAuth = async () => {
       try {
         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
           await signInWithCustomToken(auth, __initial_auth_token);
-        } else {
+        } else if (nickname) {
+          // 닉네임이 이미 있는 경우에만 익명 로그인 시도
           await signInAnonymously(auth);
         }
-      } catch (e) {
-        console.error("Auth initialization error:", e);
-      }
+      } catch (e) { console.error("Auth error:", e); }
     };
     initAuth();
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
@@ -161,11 +161,9 @@ export default function App() {
         .sort((a, b) => new Date(b.discoveredTime).getTime() - new Date(a.discoveredTime).getTime());
       setReports(formatted);
       updateMarkers(formatted);
-    }, (error) => {
-      console.error("Firestore Listen error:", error);
     });
     return () => unsubscribe();
-  }, [user, nickname]);
+  }, [user]);
 
   // 3. 지도 라이브러리 로드
   useEffect(() => {
@@ -174,13 +172,12 @@ export default function App() {
     document.head.appendChild(link);
     const script = document.createElement('script');
     script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
-    script.async = true; 
-    script.onload = () => setIsScriptLoaded(true);
+    script.async = true; script.onload = () => setIsScriptLoaded(true);
     document.head.appendChild(script);
     return () => { if (leafletMap.current) leafletMap.current.remove(); };
   }, []);
 
-  // 4. 지도 초기화 및 크기 보정 (첫 로드 시 잘림 방지)
+  // 4. 지도 초기화 및 크기 보정
   useEffect(() => {
     if (isScriptLoaded && !isSettingNickname && activeTab === 'map' && mapContainerRef.current) {
       if (!leafletMap.current) {
@@ -192,12 +189,7 @@ export default function App() {
           }).setView(GEUMJEONG_CENTER, 14);
           window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(leafletMap.current);
           updateMarkers(reports);
-          // 렌더링 완료 후 크기 재계산
-          setTimeout(() => {
-            if (leafletMap.current) {
-              leafletMap.current.invalidateSize();
-            }
-          }, 400);
+          setTimeout(() => { if (leafletMap.current) leafletMap.current.invalidateSize(); }, 500);
         }, 300);
       } else {
         leafletMap.current.invalidateSize();
@@ -234,21 +226,39 @@ export default function App() {
     }
   };
 
+  // 닉네임 설정 및 인증 동시 처리 (사용자 전환 문제 해결의 핵심)
+  const handleJoin = async (e) => {
+    e.preventDefault();
+    if (!nickname.trim()) return;
+    
+    setIsLoggingIn(true);
+    try {
+      // 1. 익명 로그인 먼저 수행
+      await signInAnonymously(auth);
+      // 2. 닉네임 저장 및 화면 전환
+      localStorage.setItem('team_nickname', nickname);
+      setIsSettingNickname(false);
+    } catch (err) {
+      alert("로그인 처리 중 오류가 발생했습니다. 다시 시도해 주세요.");
+    } finally {
+      setIsLoggingIn(false);
+    }
+  };
+
   const handleSave = async (e) => {
     e.preventDefault();
     
-    // 업로드 시점에 인증이 유효한지 강제 확인 및 갱신
-    let currentUser = auth.currentUser;
-    if (!currentUser) {
+    // 업로드 직전 최신 인증 상태 확인
+    if (!auth.currentUser) {
       try {
         await signInAnonymously(auth);
-        currentUser = auth.currentUser;
-      } catch (err) {
+      } catch (authErr) {
         return alert("사용자 인증을 완료하지 못했습니다. 인터넷 상태를 확인해 주세요.");
       }
     }
     
-    if (!currentUser) return alert("사용자 인증 대기 중입니다. 잠시 후 다시 시도해 주세요.");
+    const currentUser = auth.currentUser;
+    if (!currentUser) return alert("인증 처리 중입니다. 잠시 후 다시 시도해 주세요.");
     
     let loc = formData.customLocation;
     if (!loc && leafletMap.current) {
@@ -294,7 +304,7 @@ export default function App() {
         setIsLocating(false); 
         alert("GPS 정보를 가져올 수 없습니다. 지도 중심점 기준으로 기록됩니다."); 
       },
-      { enableHighAccuracy: true, timeout: 8000 }
+      { enableHighAccuracy: true, timeout: 10000 }
     );
   };
 
@@ -308,9 +318,7 @@ export default function App() {
         snapshot.docs.forEach((doc) => batch.delete(doc.ref));
         await batch.commit();
         alert("초기화 완료!");
-      } catch (err) {
-        console.error("Clear data error:", err);
-      }
+      } catch (err) { console.error(err); }
     }
   };
 
@@ -327,9 +335,11 @@ export default function App() {
         <div style={{ backgroundColor: 'white', padding: '40px', borderRadius: '40px', boxShadow: '0 20px 50px rgba(0,0,0,0.05)', width: '100%', maxWidth: '340px', textAlign: 'center' }}>
           <h2 style={{ fontSize: '1.25rem', fontWeight: '900', color: '#1e293b', marginBottom: '10px' }}>반가워요 활동가님!</h2>
           <p style={{ fontSize: '0.85rem', color: '#64748b', marginBottom: '32px', lineHeight: '1.6' }}>우리 팀의 실시간 지도에 합류하기 위해<br/>닉네임을 입력해 주세요.</p>
-          <form onSubmit={(e) => { e.preventDefault(); if(nickname.trim()){ localStorage.setItem('team_nickname', nickname); setIsSettingNickname(false); } }}>
+          <form onSubmit={handleJoin}>
             <input type="text" value={nickname} onChange={e => setNickname(e.target.value)} placeholder="예: 금정_철수" style={{ width: '100%', padding: '16px', borderRadius: '20px', backgroundColor: '#f0fdf4', border: 'none', outline: 'none', fontWeight: 'bold', textAlign: 'center', color: '#065f46', fontSize: '1.1rem', marginBottom: '24px' }} autoFocus />
-            <button type="submit" style={{ width: '100%', backgroundColor: '#10b981', color: 'white', border: 'none', fontWeight: '900', borderRadius: '20px', padding: '16px', fontSize: '1.1rem', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>참여하기 <ChevronRight size={20}/></button>
+            <button type="submit" disabled={isLoggingIn} style={{ width: '100%', backgroundColor: '#10b981', color: 'white', border: 'none', fontWeight: '900', borderRadius: '20px', padding: '16px', fontSize: '1.1rem', cursor: isLoggingIn ? 'default' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+              {isLoggingIn ? <Loader2 className="animate-spin" /> : <>참여하기 <ChevronRight size={20}/></>}
+            </button>
           </form>
         </div>
       </div>
@@ -352,7 +362,6 @@ export default function App() {
       </header>
 
       <main style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
-        {/* Tab 1: 지도 */}
         <div style={{ position: 'absolute', inset: 0, visibility: activeTab === 'map' ? 'visible' : 'hidden', opacity: activeTab === 'map' ? 1 : 0, transition: 'opacity 0.3s' }}>
           <div ref={mapContainerRef} style={{ width: '100%', height: '100%' }} />
           <div style={{ position: 'absolute', bottom: '24px', left: '16px', right: '16px', zIndex: 1001 }}>
@@ -366,7 +375,6 @@ export default function App() {
           </div>
         </div>
 
-        {/* Tab 2: 기록 추가 (오버레이) */}
         <div style={{ position: 'absolute', inset: 0, backgroundColor: '#f0fdf4', transform: activeTab === 'add' ? 'translateY(0)' : 'translateY(100%)', transition: 'transform 0.45s cubic-bezier(0.16, 1, 0.3, 1)', zIndex: 2000, overflowY: 'auto', padding: '24px' }}>
           <div style={{ maxWidth: '400px', margin: '0 auto', paddingBottom: '100px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '32px' }}>
@@ -386,18 +394,12 @@ export default function App() {
                   </label>
                 </div>
               </div>
-
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                 <label style={{ fontSize: '12px', fontWeight: '900', color: '#64748b' }}>장소 선택</label>
-                <select 
-                  value={formData.area} 
-                  onChange={e => setFormData({ ...formData, area: e.target.value })} 
-                  style={{ width: '100%', padding: '16px', borderRadius: '20px', border: 'none', backgroundColor: 'white', fontSize: '14px', fontWeight: 'bold', color: '#1e293b', appearance: 'none' }}
-                >
+                <select value={formData.area} onChange={e => setFormData({ ...formData, area: e.target.value })} style={{ width: '100%', padding: '16px', borderRadius: '20px', border: 'none', backgroundColor: 'white', fontSize: '14px', fontWeight: 'bold', color: '#1e293b', appearance: 'none' }}>
                   {GEUMJEONG_AREAS.map(area => <option key={area} value={area}>{area}</option>)}
                 </select>
               </div>
-
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
                 {TRASH_CATEGORIES.map(c => (
                   <button key={c.id} type="button" onClick={() => setFormData({ ...formData, category: c.id })} style={{ padding: '14px', borderRadius: '20px', border: '2px solid', borderColor: formData.category === c.id ? '#10b981' : 'transparent', backgroundColor: 'white', display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer' }}>
@@ -413,7 +415,6 @@ export default function App() {
           </div>
         </div>
 
-        {/* Tab 3: 아카이브 */}
         <div style={{ position: 'absolute', inset: 0, backgroundColor: '#f0fdf4', visibility: activeTab === 'list' ? 'visible' : 'hidden', opacity: activeTab === 'list' ? 1 : 0, transition: 'opacity 0.3s', overflowY: 'auto', padding: '24px' }}>
           <div style={{ maxWidth: '400px', margin: '0 auto', paddingBottom: '100px' }}>
             <h2 style={{ fontSize: '1.5rem', fontWeight: '900', color: '#1e293b', marginBottom: '32px', fontStyle: 'italic' }}>TEAM ARCHIVE</h2>
@@ -440,7 +441,6 @@ export default function App() {
           </div>
         </div>
 
-        {/* Tab 4: 통계 */}
         <div style={{ position: 'absolute', inset: 0, backgroundColor: '#f0fdf4', visibility: activeTab === 'stats' ? 'visible' : 'hidden', opacity: activeTab === 'stats' ? 1 : 0, transition: 'opacity 0.3s', overflowY: 'auto', padding: '24px' }}>
           <div style={{ maxWidth: '400px', margin: '0 auto', paddingBottom: '100px' }}>
             <h2 style={{ fontSize: '1.5rem', fontWeight: '900', color: '#1e293b', marginBottom: '32px', fontStyle: 'italic' }}>TEAM STATS</h2>
