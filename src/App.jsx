@@ -35,19 +35,19 @@ import {
 } from 'lucide-react';
 
 /**
- * [사계절 런앤맵 - 클린 빌드 통합 안정화 버전]
- * 1. 실행 보장: 시스템 자동 렌더링에 최적화된 export default App 구조
- * 2. 디자인: 하트 잎사귀 네잎클로버 SVG 및 연녹색 사계절 테마 (#f0fdf4)
- * 3. 데이터 오류: 모든 작업 전 실시간 인증 강제 완료 (Rule 3 준수)
- * 4. 지도 로딩: 입장 즉시 지도 표시를 위한 자동 보정 엔진
+ * [사계절 런앤맵 - 최종 통합 안정화 버전]
+ * 1. 실행 보장: Canvas 시스템의 React Contract를 준수하여 수동 렌더링 제거 (연결 오류 해결)
+ * 2. 디자인: 하트 잎사귀 네잎클로버 SVG 및 연녹색 테마 고정 (#f0fdf4)
+ * 3. 데이터 철벽 보안: 모든 작업 전 인증 상태 강제 확인 (Rule 3 준수)
+ * 4. 지도 로딩: 입장 즉시 지도 크기 보정 및 핀 표시 최적화
  */
 
-// 시스템 환경 변수 활용
+// 시스템 환경 변수 안전하게 가져오기
 const firebaseConfig = JSON.parse(__firebase_config);
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'fourseason-run-and-map-v700';
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'fourseason-run-and-map-v800';
 
 const TRASH_CATEGORIES = [
   { id: 'cup', label: '일회용 컵', color: '#10b981', icon: '🥤' },
@@ -60,9 +60,9 @@ const TRASH_CATEGORIES = [
 const GEUMJEONG_AREAS = ["부산대/장전동", "온천천/부곡동", "구서/남산동", "금사/서동", "금정산/노포동"];
 const GEUMJEONG_CENTER = [35.243, 129.092];
 
-// [커스텀] 정교한 하트 잎 네잎클로버 SVG
+// 정교하게 디자인된 네잎클로버 SVG 컴포넌트
 const PrettyClover = ({ size = 50, color = "#10b981" }) => (
-  <svg width={size} height={size} viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ filter: 'drop-shadow(0 4px 8px rgba(0,0,0,0.1))' }}>
+  <svg width={size} height={size} viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
     <g transform="translate(50, 50)">
       {[0, 90, 180, 270].map((angle) => (
         <path 
@@ -100,7 +100,7 @@ export default function App() {
 
   const isAdmin = nickname.toLowerCase() === 'admin';
 
-  // 이미지 압축 (Firestore 1MB 제한 대비)
+  // 이미지 압축 로직
   const compressImage = (base64) => {
     return new Promise((resolve) => {
       const img = new Image();
@@ -134,7 +134,7 @@ export default function App() {
     reader.readAsDataURL(file);
   };
 
-  // 1. 초기 인증 엔진 (Rule 3)
+  // 1. 초기 인증 및 부팅 (Rule 3 준수)
   useEffect(() => {
     const initAuth = async () => {
       if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
@@ -149,7 +149,7 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // 2. 실시간 데이터 스트리밍 (Rule 1 & 3)
+  // 2. 실시간 데이터 수신 (Rule 1 & 3)
   useEffect(() => {
     if (!user || !nickname) return;
     const coll = collection(db, 'artifacts', appId, 'public', 'data', 'reports');
@@ -178,21 +178,18 @@ export default function App() {
     document.head.appendChild(script);
   }, []);
 
-  // 4. 지도 자동 보정 로직
+  // 4. 지도 자동 보정 및 초기화
   useEffect(() => {
     if (isScriptLoaded && nickname && activeTab === 'map' && mapContainerRef.current) {
-      const initMap = () => {
-        if (!mapContainerRef.current) return;
-        if (!leafletMap.current) {
-          leafletMap.current = window.L.map(mapContainerRef.current, { 
-            zoomControl: false, attributionControl: false 
-          }).setView(GEUMJEONG_CENTER, 14);
-          window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(leafletMap.current);
-          updateMarkers(reports);
-        }
-        setTimeout(() => { if (leafletMap.current) leafletMap.current.invalidateSize(); }, 300);
-      };
-      initMap();
+      if (!leafletMap.current) {
+        leafletMap.current = window.L.map(mapContainerRef.current, { 
+          zoomControl: false, attributionControl: false 
+        }).setView(GEUMJEONG_CENTER, 14);
+        window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(leafletMap.current);
+        updateMarkers(reports);
+      }
+      // 렌더링 지연을 고려한 지도 크기 보정
+      setTimeout(() => { if (leafletMap.current) leafletMap.current.invalidateSize(); }, 300);
     }
   }, [isScriptLoaded, activeTab, nickname]);
 
@@ -207,20 +204,16 @@ export default function App() {
       const iconHtml = `<div style="background-color:${cat.color}; width:32px; height:32px; border-radius:10px; border:2px solid ${pinColor}; display:flex; align-items:center; justify-content:center; font-size:18px; transform:rotate(45deg); box-shadow: 0 4px 12px rgba(0,0,0,0.2);"><div style="transform:rotate(-45deg)">${cat.icon}</div></div>`;
       const icon = window.L.divIcon({ html: iconHtml, className: 'custom-pin', iconSize: [32, 32], iconAnchor: [16, 16] });
       const marker = window.L.marker([report.location.lat, report.location.lng], { icon }).addTo(leafletMap.current);
-      marker.bindPopup(`<b>${cat.icon} ${cat.label}</b><br/><small>기록: ${report.userName}</small>`);
+      marker.bindPopup(`<b>${cat.icon} ${cat.label}</b><br/><small>활동가: ${report.userName}</small>`);
       markersRef.current[report.id] = marker;
     });
   };
 
-  const handleJoin = async (e) => {
+  const handleJoin = (e) => {
     e.preventDefault();
     if (!inputNickname.trim()) return;
-    try {
-      localStorage.setItem('team_nickname', inputNickname);
-      setNickname(inputNickname);
-    } catch (err) {
-      alert("입장에 실패했습니다.");
-    }
+    localStorage.setItem('team_nickname', inputNickname);
+    setNickname(inputNickname);
   };
 
   const handleSave = async (e) => {
@@ -251,7 +244,6 @@ export default function App() {
     if (!user || !window.confirm("정말 삭제하시겠습니까?")) return;
     try {
       await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'reports', reportId));
-      alert("삭제되었습니다.");
     } catch (err) { alert("삭제 권한이 없습니다."); }
   };
 
@@ -261,20 +253,6 @@ export default function App() {
       const newStatus = currentStatus === 'pending' ? 'solved' : 'pending';
       await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'reports', reportId), { status: newStatus });
     } catch (err) { console.error(err); }
-  };
-
-  const clearAllData = async () => {
-    if (!isAdmin || !user) return;
-    if (window.confirm("🚨 관리자 경고: 모든 활동 기록을 영구 삭제하시겠습니까?")) {
-      try {
-        const coll = collection(db, 'artifacts', appId, 'public', 'data', 'reports');
-        const snap = await getDocs(coll);
-        const batch = writeBatch(db);
-        snap.docs.forEach((d) => batch.delete(d.ref));
-        await batch.commit();
-        alert("모든 기록이 초기화되었습니다.");
-      } catch (err) { alert("초기화 실패"); }
-    }
   };
 
   const getGPS = () => {
@@ -345,13 +323,11 @@ export default function App() {
       </header>
 
       <main className="flex-1 relative overflow-hidden">
-        {/* Tab 1: 지도 */}
         <div className={`absolute inset-0 z-10 ${activeTab === 'map' ? 'visible' : 'hidden'}`}>
           <div ref={mapContainerRef} className="w-full h-full" />
           <button onClick={() => setActiveTab('add')} className="absolute bottom-8 left-1/2 -translate-x-1/2 bg-[#1e293b] text-white font-black px-12 py-5 rounded-full z-[1001] shadow-2xl active:scale-95 transition-transform text-lg">기록하기 +</button>
         </div>
 
-        {/* Tab 2: 추가 */}
         <div className={`absolute inset-0 bg-[#f0fdf4] p-8 overflow-y-auto z-[2000] transition-transform duration-300 ${activeTab === 'add' ? 'translate-y-0' : 'translate-y-full'}`}>
           <div className="flex justify-between items-center mb-8">
             <h2 className="text-2xl font-black text-[#1e293b]">NEW RECORD</h2>
@@ -385,7 +361,6 @@ export default function App() {
           </form>
         </div>
 
-        {/* Tab 3: 피드 */}
         <div className={`absolute inset-0 bg-[#f0fdf4] p-8 overflow-y-auto ${activeTab === 'list' ? 'visible' : 'hidden'}`}>
            <h2 className="text-2xl font-black text-[#1e293b] mb-8">ACTIVITY FEED</h2>
            {reports.length === 0 ? <div className="text-center py-24 text-slate-400 font-black">기록이 없습니다.</div> : reports.map(r => (
@@ -404,7 +379,6 @@ export default function App() {
            ))}
         </div>
 
-        {/* Tab 4: 통계 */}
         <div className={`absolute inset-0 bg-[#f0fdf4] p-8 overflow-y-auto ${activeTab === 'stats' ? 'visible' : 'hidden'}`}>
            <h2 className="text-2xl font-black text-[#1e293b] mb-8">ACTIVITY STATS</h2>
            <div className="bg-[#1e293b] p-12 rounded-[50px] text-center mb-6 shadow-2xl">
@@ -413,20 +387,12 @@ export default function App() {
            </div>
            <div className="grid grid-cols-2 gap-5 mb-12">
               <div className="bg-white p-8 rounded-[40px] text-center border border-green-50 shadow-lg"><p className="text-[11px] font-black text-slate-400 mb-2 uppercase">Solved</p><p className="text-3xl font-black text-[#10b981]">{reports.filter(r=>r.status==='solved').length}</p></div>
-              <div className="bg-white p-8 rounded-[40px] text-center border border-green-50 shadow-lg"><p className="text-[11px] font-black text-slate-400 mb-2 uppercase">Pending</p><p className="text-3xl font-black text-slate-800">{reports.filter(r=>r.status!=='solved').length}</p></div>
+              <div className="bg-white p-8 rounded-[40px] text-center border border-green-50 shadow-lg"><p className="text-[11px] font-black text-slate-400 mb-2 uppercase">Pending</p><p className="text-3xl font-black text-[#10b981] text-slate-800">{reports.filter(r=>r.status!=='solved').length}</p></div>
            </div>
-           
-           {isAdmin && (
-             <div className="bg-white p-10 rounded-[50px] border-2 border-dashed border-red-100 text-center shadow-sm">
-               <h4 className="text-red-500 font-black mb-3 flex items-center justify-center gap-2 text-lg"><AlertTriangle size={24}/> ADMIN ONLY</h4>
-               <p className="text-xs text-slate-400 mb-8 font-black">전체 활동 기록을 영구 삭제하시겠습니까?</p>
-               <button onClick={clearAllData} className="w-full bg-red-500 text-white p-5 rounded-[24px] font-black shadow-lg active:scale-95 transition-transform text-lg">모든 데이터 초기화</button>
-             </div>
-           )}
         </div>
       </main>
 
-      <nav className="h-[95px] bg-white border-t border-[#d1fae5] flex justify-around items-center px-4 pb-8 shadow-[0_-5px_20px_rgba(0,0,0,0.02)] shrink-0">
+      <nav className="h-[95px] bg-white border-t border-[#d1fae5] flex justify-around items-center px-4 pb-8 shrink-0">
         <button onClick={() => setActiveTab('map')} className={`flex flex-col items-center gap-1.5 transition-all ${activeTab === 'map' ? 'text-[#10b981] scale-110' : 'text-slate-300'}`}>
           <MapPin size={26} fill={activeTab === 'map' ? 'currentColor' : 'none'} strokeWidth={3}/><span className="text-[11px] font-black">지도</span>
         </button>
