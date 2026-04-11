@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useRef } from 'react';
-import ReactDOM from 'react-dom/client';
 import { initializeApp } from 'firebase/app';
 import { 
   getAuth, 
@@ -35,12 +34,12 @@ import {
 } from 'lucide-react';
 
 /**
- * [사계절 런앤맵 - 최종 긴급 복구 및 기능 완전체 버전]
- * 1. 실행 오류 해결: 초기 로딩 화면 및 렌더링 엔진 최적화로 하얀 화면 방지
- * 2. 디자인: 대칭이 완벽하고 예쁜 고품질 네잎클로버 SVG 적용
- * 3. 지도 로딩 보장: 입장 직후 지도 표시를 위한 초기화 타이밍 최적화
- * 4. 데이터 철벽 방어: 모든 DB 작업(저장/삭제/상태변경) 전 인증 강제 완료 (Rule 3 준수)
- * 5. 사진 기능: 카메라 촬영 및 갤러리 이미지 선택/압축/저장 기능 연동
+ * [사계절 런앤맵 - 최종 긴급 복구 및 기능 안정화 버전]
+ * 1. 디자인: 정교한 네잎클로버 SVG 및 산뜻한 연녹색 테마 (#f0fdf4)
+ * 2. 지도 로딩: 입장 즉시 지도 표시를 위한 렌더링 타이밍 최적화
+ * 3. 데이터 철벽 방어: 모든 DB 작업 전 실시간 인증 강제 완료 (Rule 3 준수)
+ * 4. 상태 변경: 피드에서 '진행중' 클릭 시 '완료됨'으로 즉시 변경 기능
+ * 5. 사진 기능: 카메라 촬영 및 갤러리 이미지 선택/압축 연동
  */
 
 const firebaseConfig = {
@@ -53,8 +52,8 @@ const firebaseConfig = {
   databaseURL: "https://fourseason-run-and-map-default-rtdb.firebaseio.com/" 
 };
 
-// 고유 앱 아이디 (안정적인 데이터 통신을 위해 v120으로 업데이트)
-const appId = 'fourseason-run-and-map-v120-stable'; 
+// 고유 앱 아이디 (안정적인 데이터 통신을 위해 v150으로 업데이트)
+const appId = 'fourseason-run-and-map-v150-stable'; 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
@@ -70,14 +69,14 @@ const TRASH_CATEGORIES = [
 const GEUMJEONG_AREAS = ["부산대/장전동", "온천천/부곡동", "구서/남산동", "금사/서동", "금정산/노포동"];
 const GEUMJEONG_CENTER = [35.243, 129.092];
 
-// [커스텀] 정교하게 디자인된 예쁜 네잎클로버 SVG
+// [커스텀] 더 예쁘고 대칭적인 네잎클로버 SVG
 const PrettyClover = ({ size = 50, color = "#10b981" }) => (
-  <svg width={size} height={size} viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ filter: 'drop-shadow(0 5px 12px rgba(0,0,0,0.12))' }}>
-    <path d="M50 50C50 30 38 18 24 18C10 18 0 30 0 50C0 70 10 82 24 82C38 82 50 70 50 50Z" fill={color} />
-    <path d="M50 50C70 50 82 38 82 24C82 10 70 0 50 0C30 0 18 10 18 24C18 38 30 50 50 50Z" fill={color} />
-    <path d="M50 50C50 70 62 82 76 82C90 82 100 70 100 50C100 30 90 18 76 18C62 18 50 30 50 50Z" fill={color} />
-    <path d="M50 50C30 50 18 62 18 76C18 90 30 100 50 100C70 100 82 90 82 76C82 62 70 50 50 50Z" fill={color} />
-    <circle cx="50" cy="50" r="7" fill="white" opacity="0.6" />
+  <svg width={size} height={size} viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ filter: 'drop-shadow(0 4px 10px rgba(0,0,0,0.1))' }}>
+    <path d="M50 50C50 32 38 20 25 20C12 20 0 32 0 50C0 68 12 80 25 80C38 80 50 68 50 50Z" fill={color} />
+    <path d="M50 50C68 50 80 38 80 25C80 12 68 0 50 0C32 0 20 12 20 25C20 38 32 50 50 50Z" fill={color} />
+    <path d="M50 50C50 68 62 80 75 80C88 80 100 68 100 50C100 32 88 20 75 20C62 20 50 32 50 50Z" fill={color} />
+    <path d="M50 50C32 50 20 62 20 75C20 88 32 100 50 100C68 100 80 88 80 75C80 62 68 50 50 50Z" fill={color} />
+    <circle cx="50" cy="50" r="6" fill="white" opacity="0.4" />
   </svg>
 );
 
@@ -191,7 +190,7 @@ export default function App() {
   // 4. 지도 초기화 로직 (참여 직후 즉시 표시 보장)
   useEffect(() => {
     if (isScriptLoaded && nickname && activeTab === 'map' && mapContainerRef.current) {
-      const timer = setTimeout(() => {
+      const initTimer = setTimeout(() => {
         if (!mapContainerRef.current) return;
         if (!leafletMap.current) {
           leafletMap.current = window.L.map(mapContainerRef.current, { 
@@ -200,9 +199,11 @@ export default function App() {
           window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(leafletMap.current);
           updateMarkers(reports);
         }
-        leafletMap.current.invalidateSize();
+        setTimeout(() => {
+          if (leafletMap.current) leafletMap.current.invalidateSize();
+        }, 300);
       }, 300);
-      return () => clearTimeout(timer);
+      return () => clearTimeout(initTimer);
     }
   }, [isScriptLoaded, activeTab, nickname]);
 
@@ -217,7 +218,7 @@ export default function App() {
       const iconHtml = `<div style="background-color:${cat.color}; width:32px; height:32px; border-radius:10px; border:2px solid ${pinColor}; display:flex; align-items:center; justify-content:center; font-size:18px; transform:rotate(45deg); box-shadow: 0 4px 12px rgba(0,0,0,0.2);"><div style="transform:rotate(-45deg)">${cat.icon}</div></div>`;
       const icon = window.L.divIcon({ html: iconHtml, className: 'custom-pin', iconSize: [32, 32], iconAnchor: [16, 16] });
       const marker = window.L.marker([report.location.lat, report.location.lng], { icon }).addTo(leafletMap.current);
-      marker.bindPopup(`<b>${cat.icon} ${cat.label}</b><br/><small>기록: ${report.userName}</small>`);
+      marker.bindPopup(`<b>${cat.icon} ${cat.label}</b><br/><small>활동가: ${report.userName}</small>`);
       markersRef.current[report.id] = marker;
     });
   };
@@ -266,7 +267,7 @@ export default function App() {
       const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'reports', reportId);
       await updateDoc(docRef, { status: newStatus });
       alert(newStatus === 'solved' ? "완료됨으로 변경되었습니다! ✨" : "진행중으로 변경되었습니다.");
-    } catch (err) { alert("상태 변경 실패: 다시 시도해 주세요."); }
+    } catch (err) { alert("상태 변경 실패"); }
   };
 
   const clearAllData = async () => {
@@ -313,7 +314,7 @@ export default function App() {
       <div style={{ position: 'fixed', inset: 0, backgroundColor: '#f0fdf4', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '24px', zIndex: 9999, fontFamily: 'sans-serif' }}>
         <div style={{ marginBottom: '40px', textAlign: 'center', width: '100%' }}>
           <div style={{ margin: '0 auto 24px' }}>
-            <PrettyClover size={130} />
+            <PrettyClover size={140} />
           </div>
           <h1 style={{ fontSize: '2.8rem', fontWeight: '900', color: '#1e293b', marginBottom: '8px', letterSpacing: '-0.05em' }}>FOUR SEASONS</h1>
           <p style={{ fontSize: '0.9rem', fontWeight: '800', color: '#10b981', letterSpacing: '0.2em', textTransform: 'uppercase' }}>Run & Map Geumjeong</p>
@@ -340,10 +341,10 @@ export default function App() {
   return (
     <div style={{ position: 'fixed', inset: 0, display: 'flex', flexDirection: 'column', backgroundColor: '#f0fdf4', fontFamily: 'sans-serif', overflow: 'hidden' }}>
       {/* 헤더 */}
-      <header style={{ height: '70px', backgroundColor: 'white', borderBottom: '1px solid #d1fae5', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 24px', zIndex: 1000, flexShrink: 0 }}>
+      <header style={{ height: '75px', backgroundColor: 'white', borderBottom: '1px solid #d1fae5', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 24px', zIndex: 1000, flexShrink: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           <div style={{ backgroundColor: isAdmin ? '#ef4444' : '#10b981', padding: '6px', borderRadius: '12px', color: 'white' }}>
-            {isAdmin ? <ShieldCheck size={20}/> : <PrettyClover size={24} color="white" />}
+            {isAdmin ? <ShieldCheck size={20}/> : <PrettyClover size={26} color="white" />}
           </div>
           <span style={{ fontSize: '1.1rem', fontWeight: '900', color: '#1e293b' }}>FOUR SEASONS</span>
         </div>
@@ -355,8 +356,8 @@ export default function App() {
 
       {/* 메인 영역 */}
       <main style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
-        {/* Tab 1: 지도 */}
-        <div style={{ position: 'absolute', inset: 0, display: activeTab === 'map' ? 'block' : 'none', zIndex: 10 }}>
+        {/* Tab 1: 지도 (항상 렌더링하되 숨김/표시 처리하여 Leaflet 충돌 방지) */}
+        <div style={{ position: 'absolute', inset: 0, visibility: activeTab === 'map' ? 'visible' : 'hidden', zIndex: 10 }}>
           <div ref={mapContainerRef} style={{ width: '100%', height: '100%', minHeight: '100%', backgroundColor: '#f0fdf4' }} />
           <button onClick={() => setActiveTab('add')} style={{ position: 'absolute', bottom: '35px', left: '50%', transform: 'translateX(-50%)', backgroundColor: '#1e293b', color: 'white', border: 'none', fontWeight: '900', borderRadius: '50px', padding: '20px 45px', fontSize: '1.2rem', zIndex: 1001, boxShadow: '0 25px 35px -5px rgba(0, 0, 0, 0.3)', cursor: 'pointer' }}>기록하기 +</button>
         </div>
@@ -429,7 +430,7 @@ export default function App() {
            </div>
            
            {isAdmin && (
-             <div style={{ backgroundColor: 'white', padding: '45px', borderRadius: '55px', border: '2px dashed #fee2e2', textAlign: 'center' }}>
+             <div style={{ backgroundColor: 'white', padding: '40px', borderRadius: '55px', border: '2px dashed #fee2e2', textAlign: 'center' }}>
                <h4 style={{ color: '#ef4444', fontWeight: '900', margin: '0 0 15px 0', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px', fontSize: '1.3rem' }}><AlertTriangle size={28}/> ADMIN ONLY</h4>
                <p style={{ fontSize: '14px', color: '#94a3b8', marginBottom: '35px', fontWeight: '900' }}>전체 활동 기록을 영구히 초기화할 수 있습니다.</p>
                <button onClick={clearAllData} style={{ width: '100%', backgroundColor: '#ef4444', color: 'white', border: 'none', padding: '22px', borderRadius: '28px', fontWeight: '900', fontSize: '1.25rem', cursor: 'pointer', boxShadow: '0 12px 20px -3px rgba(239, 68, 68, 0.4)' }}>모든 데이터 초기화</button>
@@ -462,11 +463,4 @@ export default function App() {
       `}</style>
     </div>
   );
-}
-
-// 렌더링 코드
-const rootElement = document.getElementById('root');
-if (rootElement) {
-  const root = ReactDOM.createRoot(rootElement);
-  root.render(<App />);
 }
