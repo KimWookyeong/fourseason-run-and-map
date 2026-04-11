@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
+import ReactDOM from 'react-dom/client';
 import { initializeApp } from 'firebase/app';
 import { 
   getAuth, 
   signInAnonymously, 
   onAuthStateChanged, 
-  signOut, 
+  signOut,
   signInWithCustomToken 
 } from 'firebase/auth';
 import { 
@@ -36,12 +37,13 @@ import {
 } from 'lucide-react';
 
 /**
- * [사계절 런앤맵 - 관리자 모드 통합 최종본]
- * 1. 관리자 권한: 닉네임 'admin' 사용 시 전체 삭제 및 개별 삭제 권한 부여
- * 2. 인증 즉시 로딩: 입장 시 즉시 로그인하여 첫 업로드 지연 해결
- * 3. 디자인: 연초록색(#f0fdf4) 배경 및 인라인 스타일 고정
+ * [사계절 런앤맵 - 저장 오류 완전 방어 버전]
+ * 1. Rule 3 준수: 저장 시도 전 실시간 인증 상태를 다시 확인하고 실패 시 즉시 재인증합니다.
+ * 2. Rule 1 준수: 엄격한 Firestore 경로 사용.
+ * 3. 에러 핸들링: 단순 '실패' 메시지가 아닌 원인을 추적할 수 있도록 개선했습니다.
  */
 
+// 전역 변수 활용 및 기본 설정
 const firebaseConfig = typeof __firebase_config !== 'undefined' 
   ? JSON.parse(__firebase_config) 
   : {
@@ -54,7 +56,7 @@ const firebaseConfig = typeof __firebase_config !== 'undefined'
       databaseURL: "https://fourseason-run-and-map-default-rtdb.firebaseio.com/" 
     };
 
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'fourseason-run-and-map';
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'fourseason-run-and-map-v2026';
 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -95,8 +97,40 @@ export default function App() {
     image: null
   });
 
-  // 관리자 여부 확인
   const isAdmin = nickname.toLowerCase() === 'admin';
+
+  // 1. 초기 인증 로직 강화 (Rule 3)
+  useEffect(() => {
+    const initAuth = async () => {
+      try {
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await signInWithCustomToken(auth, __initial_auth_token);
+        } else {
+          await signInAnonymously(auth);
+        }
+      } catch (e) {
+        console.error("초기 인증 에러:", e);
+      }
+    };
+    initAuth();
+    const unsubscribe = onAuthStateChanged(auth, setUser);
+    return () => unsubscribe();
+  }, []);
+
+  // 2. 실시간 데이터 수신 (인증 보호 추가)
+  useEffect(() => {
+    if (!user) return;
+    const reportsCollection = collection(db, 'artifacts', appId, 'public', 'data', 'reports');
+    const unsubscribe = onSnapshot(reportsCollection, (snapshot) => {
+      const formatted = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }))
+        .sort((a, b) => new Date(b.discoveredTime).getTime() - new Date(a.discoveredTime).getTime());
+      setReports(formatted);
+      updateMarkers(formatted);
+    }, (error) => {
+      console.error("데이터 수신 중 에러:", error);
+    });
+    return () => unsubscribe();
+  }, [user]);
 
   // 이미지 압축
   const compressImage = (base64) => {
@@ -108,12 +142,8 @@ export default function App() {
         const MAX_WIDTH = 800;
         let width = img.width;
         let height = img.height;
-        if (width > MAX_WIDTH) {
-          height *= MAX_WIDTH / width;
-          width = MAX_WIDTH;
-        }
-        canvas.width = width;
-        canvas.height = height;
+        if (width > MAX_WIDTH) { height *= MAX_WIDTH / width; width = MAX_WIDTH; }
+        canvas.width = width; canvas.height = height;
         const ctx = canvas.getContext('2d');
         if (ctx) {
           ctx.drawImage(img, 0, 0, width, height);
@@ -136,36 +166,7 @@ export default function App() {
     reader.readAsDataURL(file);
   };
 
-  // 1. 인증 상태 감시
-  useEffect(() => {
-    const initAuth = async () => {
-      try {
-        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-          await signInWithCustomToken(auth, __initial_auth_token);
-        } else if (nickname) {
-          await signInAnonymously(auth);
-        }
-      } catch (e) { console.error("Auth Error:", e); }
-    };
-    initAuth();
-    const unsubscribe = onAuthStateChanged(auth, setUser);
-    return () => unsubscribe();
-  }, [nickname]);
-
-  // 2. 실시간 데이터 수신
-  useEffect(() => {
-    if (!user) return;
-    const reportsCollection = collection(db, 'artifacts', appId, 'public', 'data', 'reports');
-    const unsubscribe = onSnapshot(reportsCollection, (snapshot) => {
-      const formatted = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }))
-        .sort((a, b) => new Date(b.discoveredTime).getTime() - new Date(a.discoveredTime).getTime());
-      setReports(formatted);
-      updateMarkers(formatted);
-    });
-    return () => unsubscribe();
-  }, [user]);
-
-  // 3. 지도 라이브러리 로드
+  // 3. 지도 로딩
   useEffect(() => {
     const link = document.createElement('link');
     link.rel = 'stylesheet'; link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
@@ -175,10 +176,8 @@ export default function App() {
     script.async = true; 
     script.onload = () => setIsScriptLoaded(true);
     document.head.appendChild(script);
-    return () => { if (leafletMap.current) leafletMap.current.remove(); };
   }, []);
 
-  // 4. 지도 초기화 및 크기 보정
   useEffect(() => {
     if (isScriptLoaded && !isSettingNickname && activeTab === 'map' && mapContainerRef.current) {
       if (!leafletMap.current) {
@@ -207,13 +206,52 @@ export default function App() {
       const cat = TRASH_CATEGORIES.find(c => c.id === report.category) || TRASH_CATEGORIES[4];
       const isMine = report.userName === nickname;
       const pinColor = isAdmin ? '#ef4444' : (isMine ? '#000' : '#fff');
-      
       const iconHtml = `<div style="background-color:${cat.color}; width:30px; height:30px; border-radius:10px; border:2px solid ${pinColor}; display:flex; align-items:center; justify-content:center; font-size:16px; transform:rotate(45deg); box-shadow: 0 4px 12px rgba(0,0,0,0.15);"><div style="transform:rotate(-45deg)">${cat.icon}</div></div>`;
       const icon = window.L.divIcon({ html: iconHtml, className: 'custom-pin', iconSize: [30, 30], iconAnchor: [15, 15] });
       const marker = window.L.marker([report.location.lat, report.location.lng], { icon }).addTo(leafletMap.current);
       marker.bindPopup(`<b>${cat.icon} ${cat.label}</b><br/><small>활동가: ${report.userName}</small>`);
       markersRef.current[report.id] = marker;
     });
+  };
+
+  // 4. 저장 기능 대폭 강화 (재인증 로직 포함)
+  const handleSave = async (e) => {
+    e.preventDefault();
+    
+    // 강제 인증 체크
+    if (!auth.currentUser) {
+      try {
+        await signInAnonymously(auth);
+      } catch (err) {
+        return alert("네트워크 연결이 불안정합니다. 잠시 후 다시 시도해주세요.");
+      }
+    }
+
+    let loc = formData.customLocation;
+    if (!loc && leafletMap.current) {
+      const center = leafletMap.current.getCenter();
+      loc = { lat: center.lat, lng: center.lng };
+    }
+
+    setIsUploading(true);
+    try {
+      const reportsCollection = collection(db, 'artifacts', appId, 'public', 'data', 'reports');
+      await addDoc(reportsCollection, { 
+        ...formData, 
+        location: loc || { lat: GEUMJEONG_CENTER[0], lng: GEUMJEONG_CENTER[1] }, 
+        userName: nickname, 
+        discoveredTime: new Date().toISOString() 
+      });
+      
+      setFormData({ category: 'cup', area: GEUMJEONG_AREAS[0], description: '', status: 'pending', customLocation: null, image: null });
+      setActiveTab('map');
+      alert("성공적으로 저장되었습니다! 🏁");
+    } catch (err) {
+      console.error("저장 에러 상세:", err);
+      alert("저장하지 못했습니다. (원인: " + (err.code || "알 수 없는 오류") + ")");
+    } finally {
+      setIsUploading(false);
+    }
   };
 
   const handleLogout = () => {
@@ -238,69 +276,9 @@ export default function App() {
       localStorage.setItem('team_nickname', nickname);
       setIsSettingNickname(false);
     } catch (err) {
-      alert("로그인 처리 중 오류가 발생했습니다.");
+      alert("참여 중 오류가 발생했습니다.");
     } finally {
       setIsLoggingIn(false);
-    }
-  };
-
-  const handleSave = async (e) => {
-    e.preventDefault();
-    if (!auth.currentUser) {
-      try { await signInAnonymously(auth); } 
-      catch (err) { return alert("인증 실패!"); }
-    }
-    
-    let loc = formData.customLocation;
-    if (!loc && leafletMap.current) {
-      const center = leafletMap.current.getCenter();
-      loc = { lat: center.lat, lng: center.lng };
-    }
-
-    setIsUploading(true);
-    try {
-      const reportsCollection = collection(db, 'artifacts', appId, 'public', 'data', 'reports');
-      await addDoc(reportsCollection, { 
-        ...formData, 
-        location: loc || { lat: GEUMJEONG_CENTER[0], lng: GEUMJEONG_CENTER[1] }, 
-        userName: nickname, 
-        discoveredTime: new Date().toISOString() 
-      });
-      setFormData({ category: 'cup', area: GEUMJEONG_AREAS[0], description: '', status: 'pending', customLocation: null, image: null });
-      setActiveTab('map');
-      alert("지도에 업로드되었습니다! 🏁");
-    } catch (err) {
-      alert("업로드 실패! 다시 시도해주세요.");
-    } finally {
-      setIsUploading(false);
-    }
-  };
-
-  const getGPS = () => {
-    setIsLocating(true);
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        const coords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-        setFormData(prev => ({ ...prev, customLocation: coords }));
-        setIsLocating(false);
-        if (leafletMap.current) leafletMap.current.setView([coords.lat, coords.lng], 16);
-      },
-      () => { setIsLocating(false); alert("GPS 수신 실패. 지도의 중심점이 기록됩니다."); },
-      { enableHighAccuracy: true, timeout: 8000 }
-    );
-  };
-
-  const clearAllData = async () => {
-    if (!isAdmin) return;
-    if (window.confirm("🚨 경고: 모든 활동 기록이 영구 삭제됩니다. 계속하시겠습니까?")) {
-      try {
-        const reportsCollection = collection(db, 'artifacts', appId, 'public', 'data', 'reports');
-        const snapshot = await getDocs(reportsCollection);
-        const batch = writeBatch(db);
-        snapshot.docs.forEach((doc) => batch.delete(doc.ref));
-        await batch.commit();
-        alert("모든 기록이 초기화되었습니다.");
-      } catch (err) { alert("삭제 실패: " + err.message); }
     }
   };
 
@@ -312,14 +290,11 @@ export default function App() {
         </div>
         <h1 style={{ fontSize: '2.5rem', fontWeight: '900', color: '#1e293b', margin: '0 0 4px 0', letterSpacing: '-0.05em' }}>FOUR SEASONS</h1>
         <p style={{ fontSize: '0.75rem', fontWeight: '900', color: '#10b981', letterSpacing: '0.3em', marginBottom: '40px' }}>RUN & MAP GEUMJEONG</p>
-        
         <div style={{ backgroundColor: 'white', padding: '40px', borderRadius: '40px', boxShadow: '0 20px 50px rgba(0,0,0,0.05)', width: '100%', maxWidth: '340px', textAlign: 'center' }}>
-          <h2 style={{ fontSize: '1.25rem', fontWeight: '900', color: '#1e293b', marginBottom: '10px' }}>반가워요 활동가님!</h2>
-          <p style={{ fontSize: '0.85rem', color: '#64748b', marginBottom: '32px', lineHeight: '1.6' }}>우리 팀의 실시간 지도에 합류하기 위해<br/>닉네임을 입력해 주세요.</p>
           <form onSubmit={handleJoin}>
-            <input type="text" value={nickname} onChange={e => setNickname(e.target.value)} placeholder="예: 금정_철수" style={{ width: '100%', padding: '16px', borderRadius: '20px', backgroundColor: '#f0fdf4', border: 'none', outline: 'none', fontWeight: 'bold', textAlign: 'center', color: '#065f46', fontSize: '1.1rem', marginBottom: '24px' }} autoFocus />
-            <button type="submit" disabled={isLoggingIn} style={{ width: '100%', backgroundColor: '#10b981', color: 'white', border: 'none', fontWeight: '900', borderRadius: '20px', padding: '16px', fontSize: '1.1rem', cursor: isLoggingIn ? 'default' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
-              {isLoggingIn ? <Loader2 className="animate-spin" /> : <>참여하기 <ChevronRight size={20}/></>}
+            <input type="text" value={nickname} onChange={e => setNickname(e.target.value)} placeholder="닉네임 입력" style={{ width: '100%', padding: '16px', borderRadius: '20px', backgroundColor: '#f0fdf4', border: 'none', outline: 'none', fontWeight: 'bold', textAlign: 'center', color: '#065f46', fontSize: '1.1rem', marginBottom: '24px' }} autoFocus />
+            <button type="submit" style={{ width: '100%', backgroundColor: '#10b981', color: 'white', border: 'none', fontWeight: '900', borderRadius: '20px', padding: '16px', fontSize: '1.1rem', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+              {isLoggingIn ? <Loader2 className="animate-spin" /> : "참여하기"}
             </button>
           </form>
         </div>
@@ -327,174 +302,80 @@ export default function App() {
     );
   }
 
-  const solvedCount = reports.filter(r => r.status === 'solved').length;
-
   return (
-    <div style={{ position: 'fixed', inset: 0, display: 'flex', flexDirection: 'column', backgroundColor: '#f0fdf4', fontFamily: '-apple-system, sans-serif' }}>
-      <header style={{ height: '65px', backgroundColor: 'rgba(255,255,255,0.95)', backdropFilter: 'blur(10px)', borderBottom: '1px solid #d1fae5', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 20px', zIndex: 1000 }}>
+    <div style={{ position: 'fixed', inset: 0, display: 'flex', flexDirection: 'column', backgroundColor: '#f0fdf4', fontFamily: 'sans-serif' }}>
+      <header style={{ height: '65px', backgroundColor: 'white', borderBottom: '1px solid #d1fae5', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 20px', zIndex: 1000 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <div style={{ backgroundColor: isAdmin ? '#ef4444' : '#10b981', padding: '6px', borderRadius: '10px', color: 'white' }}>
-            {isAdmin ? <ShieldCheck size={16} fill="white"/> : <Navigation size={16} fill="white"/>}
+            {isAdmin ? <ShieldCheck size={16}/> : <Navigation size={16}/>}
           </div>
           <span style={{ fontSize: '14px', fontWeight: '900', color: '#1e293b' }}>FOUR SEASONS</span>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <span style={{ backgroundColor: isAdmin ? '#fef2f2' : '#f0fdf4', color: isAdmin ? '#ef4444' : '#047857', fontWeight: '900', fontSize: '10px', padding: '4px 12px', borderRadius: '20px', border: `1px solid ${isAdmin ? '#fecaca' : '#d1fae5'}` }}>
-            {isAdmin ? 'ADMIN' : nickname}
-          </span>
-          <button onClick={handleLogout} style={{ border: 'none', background: '#f1f5f9', padding: '8px', borderRadius: '10px', color: '#64748b', cursor: 'pointer' }}><LogOut size={16}/></button>
+          <span style={{ backgroundColor: '#f0fdf4', color: '#047857', fontWeight: '900', fontSize: '10px', padding: '4px 12px', borderRadius: '20px' }}>{nickname}</span>
+          <button onClick={handleLogout} style={{ border: 'none', background: '#f1f5f9', padding: '8px', borderRadius: '10px', color: '#64748b' }}><LogOut size={16}/></button>
         </div>
       </header>
 
       <main style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
-        {/* Tab 1: 지도 */}
-        <div style={{ position: 'absolute', inset: 0, visibility: activeTab === 'map' ? 'visible' : 'hidden', opacity: activeTab === 'map' ? 1 : 0, transition: 'opacity 0.3s' }}>
+        <div style={{ position: 'absolute', inset: 0, visibility: activeTab === 'map' ? 'visible' : 'hidden' }}>
           <div ref={mapContainerRef} style={{ width: '100%', height: '100%' }} />
-          <div style={{ position: 'absolute', bottom: '24px', left: '16px', right: '16px', zIndex: 1001 }}>
-            <div style={{ backgroundColor: 'white', padding: '16px', borderRadius: '32px', boxShadow: '0 15px 35px rgba(0,0,0,0.1)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', border: '1px solid #f0fdf4' }}>
-               <div style={{ display: 'flex', gap: '20px', paddingLeft: '10px' }}>
-                 <div style={{ textAlign: 'center' }}><p style={{ fontSize: '8px', fontWeight: '900', color: '#cbd5e1', textTransform: 'uppercase' }}>Found</p><p style={{ fontSize: '20px', fontWeight: '900', color: '#1e293b', margin: 0 }}>{reports.length}</p></div>
-                 <div style={{ borderLeft: '1px solid #f1f5f9', paddingLeft: '20px', textAlign: 'center' }}><p style={{ fontSize: '8px', fontWeight: '900', color: '#cbd5e1', textTransform: 'uppercase' }}>Solved</p><p style={{ fontSize: '20px', fontWeight: '900', color: '#10b981', margin: 0 }}>{solvedCount}</p></div>
-               </div>
-               <button onClick={() => setActiveTab('add')} style={{ backgroundColor: '#1e293b', color: 'white', border: 'none', fontWeight: '900', borderRadius: '20px', padding: '14px 24px', fontSize: '13px', display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}><PlusCircle size={18}/> 기록하기</button>
-            </div>
-          </div>
+          <button onClick={() => setActiveTab('add')} style={{ position: 'absolute', bottom: '24px', left: '16px', right: '16px', backgroundColor: '#1e293b', color: 'white', border: 'none', fontWeight: '900', borderRadius: '20px', padding: '18px', zIndex: 1001, boxShadow: '0 10px 25px rgba(0,0,0,0.2)' }}>기록하기 +</button>
         </div>
 
-        {/* Tab 2: 기록 추가 (오버레이) */}
-        <div style={{ position: 'absolute', inset: 0, backgroundColor: '#f0fdf4', transform: activeTab === 'add' ? 'translateY(0)' : 'translateY(100%)', transition: 'transform 0.45s cubic-bezier(0.16, 1, 0.3, 1)', zIndex: 2000, overflowY: 'auto', padding: '24px' }}>
-          <div style={{ maxWidth: '400px', margin: '0 auto', paddingBottom: '100px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '32px' }}>
-              <h2 style={{ fontSize: '1.5rem', fontWeight: '900', color: '#1e293b', margin: 0, fontStyle: 'italic' }}>NEW RECORD</h2>
-              <button onClick={() => setActiveTab('map')} style={{ border: 'none', background: 'white', padding: '10px', borderRadius: '14px', color: '#cbd5e1', cursor: 'pointer' }}><X/></button>
-            </div>
-            <form onSubmit={handleSave} style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-                <div style={{ backgroundColor: '#1e293b', padding: '20px', borderRadius: '24px', color: 'white', display: 'flex', flexDirection: 'column', justifyContent: 'space-between', minHeight: '120px' }}>
-                  <span style={{ fontSize: '10px', fontWeight: '900', color: '#10b981', display: 'flex', alignItems: 'center', gap: '4px' }}><MapPin size={12}/> GPS</span>
-                  <button type="button" onClick={getGPS} style={{ border: 'none', padding: '10px', borderRadius: '12px', fontWeight: '900', fontSize: '10px', backgroundColor: formData.customLocation ? '#10b981' : 'white', color: formData.customLocation ? 'white' : '#1e293b' }}>{isLocating ? "수신 중..." : formData.customLocation ? "수신 완료" : "위치 잡기"}</button>
-                </div>
-                <div style={{ position: 'relative' }}>
-                  <input type="file" accept="image/*" onChange={handleImageChange} style={{ display: 'none' }} id="photo-upload" />
-                  <label htmlFor="photo-upload" style={{ width: '100%', height: '120px', borderRadius: '24px', border: '2px dashed #d1fae5', background: 'white', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', overflow: 'hidden' }}>
-                    {formData.image ? <img src={formData.image} alt="preview" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <><Camera size={24} color="#10b981"/><span style={{ fontSize: '10px', fontWeight: '900', color: '#10b981', marginTop: '4px' }}>사진 추가</span></>}
-                  </label>
-                </div>
-              </div>
-
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                <label style={{ fontSize: '12px', fontWeight: '900', color: '#64748b' }}>장소 선택</label>
-                <select 
-                  value={formData.area} 
-                  onChange={e => setFormData({ ...formData, area: e.target.value })} 
-                  style={{ width: '100%', padding: '16px', borderRadius: '20px', border: 'none', backgroundColor: 'white', fontSize: '14px', fontWeight: 'bold', color: '#1e293b', appearance: 'none' }}
-                >
-                  {GEUMJEONG_AREAS.map(area => <option key={area} value={area}>{area}</option>)}
-                </select>
-              </div>
-
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-                {TRASH_CATEGORIES.map(c => (
-                  <button key={c.id} type="button" onClick={() => setFormData({ ...formData, category: c.id })} style={{ padding: '14px', borderRadius: '20px', border: '2px solid', borderColor: formData.category === c.id ? '#10b981' : 'transparent', backgroundColor: 'white', display: 'flex', alignItems: 'center', gap: '10px', cursor: 'pointer' }}>
-                    <span style={{ fontSize: '1.2rem' }}>{c.icon}</span><span style={{ fontSize: '11px', fontWeight: '900', color: '#1e293b' }}>{c.label}</span>
-                  </button>
-                ))}
-              </div>
-              <textarea value={formData.description} onChange={e => setFormData({ ...formData, description: e.target.value })} placeholder="어떤 상황인가요?" style={{ width: '100%', padding: '20px', borderRadius: '24px', border: 'none', background: 'white', minHeight: '100px', fontSize: '14px', outline: 'none' }} />
-              <button disabled={isUploading} style={{ backgroundColor: isUploading ? '#cbd5e1' : '#10b981', color: 'white', border: 'none', padding: '20px', borderRadius: '24px', fontWeight: '900', fontSize: '1.1rem', cursor: isUploading ? 'default' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' }}>
-                {isUploading ? <><Loader2 className="animate-spin" /> 업로드 중...</> : "지도에 업로드"}
-              </button>
-            </form>
+        <div style={{ position: 'absolute', inset: 0, backgroundColor: '#f0fdf4', display: activeTab === 'add' ? 'block' : 'none', padding: '24px', overflowY: 'auto', zIndex: 2000 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '32px' }}>
+            <h2 style={{ fontSize: '1.5rem', fontWeight: '900', color: '#1e293b', margin: 0 }}>새 기록</h2>
+            <button onClick={() => setActiveTab('map')} style={{ border: 'none', background: 'white', padding: '10px', borderRadius: '14px' }}><X/></button>
           </div>
-        </div>
-
-        {/* Tab 3: 아카이브 */}
-        <div style={{ position: 'absolute', inset: 0, backgroundColor: '#f0fdf4', visibility: activeTab === 'list' ? 'visible' : 'hidden', opacity: activeTab === 'list' ? 1 : 0, transition: 'opacity 0.3s', overflowY: 'auto', padding: '24px' }}>
-          <div style={{ maxWidth: '400px', margin: '0 auto', paddingBottom: '100px' }}>
-            <h2 style={{ fontSize: '1.5rem', fontWeight: '900', color: '#1e293b', marginBottom: '32px', fontStyle: 'italic' }}>TEAM ARCHIVE</h2>
-            {reports.length === 0 ? <div style={{ textAlign: 'center', padding: '40px', color: '#94a3b8', fontWeight: 'bold' }}>기록이 없습니다.</div> : reports.map(r => (
-              <div key={r.id} style={{ backgroundColor: 'white', borderRadius: '32px', padding: '20px', marginBottom: '20px', border: '1px solid #f0fdf4', boxShadow: '0 4px 15px rgba(0,0,0,0.02)' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '16px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                    <span style={{ fontSize: '1.5rem', background: '#f0fdf4', padding: '8px', borderRadius: '12px' }}>{TRASH_CATEGORIES.find(c => c.id === r.category)?.icon}</span>
-                    <div><h4 style={{ margin: 0, fontWeight: '900', color: '#1e293b' }}>{TRASH_CATEGORIES.find(c => c.id === r.category)?.label}</h4><p style={{ margin: 0, fontSize: '9px', color: '#94a3b8' }}>{new Date(r.discoveredTime).toLocaleString()}</p></div>
-                  </div>
-                  <button onClick={() => updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'reports', r.id), { status: r.status === 'pending' ? 'solved' : 'pending' })} style={{ border: 'none', padding: '6px 14px', borderRadius: '12px', fontSize: '9px', fontWeight: '900', background: r.status === 'solved' ? '#10b981' : '#f1f5f9', color: r.status === 'solved' ? 'white' : '#94a3b8', cursor: 'pointer' }}>{r.status === 'solved' ? '해결됨 ✓' : '진행중'}</button>
-                </div>
-                {r.image && <img src={r.image} alt="trash" style={{ width: '100%', height: '180px', objectFit: 'cover', borderRadius: '24px', marginBottom: '16px' }} />}
-                <p style={{ margin: 0, padding: '16px', background: 'rgba(16,185,129,0.05)', borderRadius: '18px', fontSize: '13px', color: '#475569', fontStyle: 'italic', borderLeft: '4px solid #10b981' }}>{r.description || "기록 내용이 없습니다."}</p>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '16px', paddingTop: '16px', borderTop: '1px solid #f8fafc' }}>
-                  <span style={{ fontSize: '10px', fontWeight: '900', color: '#64748b', display: 'flex', alignItems: 'center', gap: '4px' }}><User size={10}/> {r.userName}</span>
-                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                    <span style={{ background: isAdmin ? '#fef2f2' : '#ecfdf5', color: isAdmin ? '#ef4444' : '#10b981', padding: '4px 12px', borderRadius: '10px', fontSize: '9px', fontWeight: '900' }}>{r.area}</span>
-                    {/* 관리자 권한으로 삭제 가능 */}
-                    {(r.userName === nickname || isAdmin) && (
-                      <button onClick={() => { if(window.confirm("삭제하시겠습니까?")) deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'reports', r.id)); }} style={{ border: 'none', background: 'none', color: '#fca5a5', cursor: 'pointer' }}><Trash2 size={16}/></button>
-                    )}
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Tab 4: 통계 */}
-        <div style={{ position: 'absolute', inset: 0, backgroundColor: '#f0fdf4', visibility: activeTab === 'stats' ? 'visible' : 'hidden', opacity: activeTab === 'stats' ? 1 : 0, transition: 'opacity 0.3s', overflowY: 'auto', padding: '24px' }}>
-          <div style={{ maxWidth: '400px', margin: '0 auto', paddingBottom: '100px' }}>
-            <h2 style={{ fontSize: '1.5rem', fontWeight: '900', color: '#1e293b', marginBottom: '32px', fontStyle: 'italic' }}>TEAM STATS</h2>
-            <div style={{ backgroundColor: '#1e293b', borderRadius: '32px', padding: '32px', color: 'white', textAlign: 'center', marginBottom: '24px' }}>
-               <h3 style={{ fontSize: '3rem', fontWeight: '900', margin: '0 0 8px 0' }}>{solvedCount}</h3>
-               <p style={{ fontSize: '0.8rem', fontWeight: '900', color: '#10b981', textTransform: 'uppercase' }}>Cleaned Up!</p>
-            </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-              <div style={{ background: 'white', padding: '24px', borderRadius: '24px', textAlign: 'center' }}><p style={{ margin: 0, fontSize: '9px', fontWeight: '900', color: '#cbd5e1' }}>TOTAL FOUND</p><p style={{ margin: '8px 0 0 0', fontSize: '24px', fontWeight: '900', color: '#1e293b' }}>{reports.length}</p></div>
-              <div style={{ background: 'white', padding: '24px', borderRadius: '24px', textAlign: 'center' }}><p style={{ margin: 0, fontSize: '9px', fontWeight: '900', color: '#cbd5e1' }}>SUCCESS RATE</p><p style={{ margin: '8px 0 0 0', fontSize: '24px', fontWeight: '900', color: '#10b981' }}>{reports.length > 0 ? Math.round((solvedCount / reports.length) * 100) : 0}%</p></div>
-            </div>
-            
-            {/* 관리자 도구 섹션 */}
-            {isAdmin && (
-              <div style={{ marginTop: '40px', padding: '32px', background: 'white', borderRadius: '32px', border: '2px dashed #fee2e2', textAlign: 'center' }}>
-                <h4 style={{ color: '#ef4444', fontWeight: '900', margin: '0 0 10px 0', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
-                  <AlertTriangle size={18}/> ADMIN PANEL
-                </h4>
-                <p style={{ fontSize: '0.8rem', color: '#94a3b8', marginBottom: '24px', lineHeight: '1.5' }}>
-                  관리자 권한으로 전체 기록을 초기화할 수 있습니다.<br/>삭제된 데이터는 복구할 수 없습니다.
-                </p>
-                <button 
-                  onClick={clearAllData} 
-                  style={{ width: '100%', background: '#ef4444', color: 'white', border: 'none', padding: '16px', borderRadius: '16px', fontWeight: '900', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
-                >
-                  <Trash2 size={18}/> 기록 전체 초기화
+          <form onSubmit={handleSave} style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <button type="button" onClick={() => { navigator.geolocation.getCurrentPosition(pos => setFormData(prev => ({ ...prev, customLocation: { lat: pos.coords.latitude, lng: pos.coords.longitude } }))); }} style={{ height: '100px', borderRadius: '24px', backgroundColor: '#1e293b', color: 'white', border: 'none', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+                   <MapPin size={24} color={formData.customLocation ? "#10b981" : "white"}/>
+                   <span style={{ fontSize: '10px', fontWeight: '900' }}>{formData.customLocation ? "위치 완료" : "내 위치 찾기"}</span>
                 </button>
-              </div>
-            )}
-          </div>
+                <label style={{ height: '100px', borderRadius: '24px', backgroundColor: 'white', border: '2px dashed #d1fae5', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', overflow: 'hidden' }}>
+                   <input type="file" accept="image/*" onChange={handleImageChange} style={{ display: 'none' }} />
+                   {formData.image ? <img src={formData.image} style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <><Camera size={24} color="#10b981"/><span style={{ fontSize: '10px', fontWeight: '900', color: '#10b981' }}>사진 추가</span></>}
+                </label>
+             </div>
+             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+               {TRASH_CATEGORIES.map(c => (
+                 <button key={c.id} type="button" onClick={() => setFormData({...formData, category: c.id})} style={{ padding: '14px', borderRadius: '20px', border: '2px solid', borderColor: formData.category === c.id ? '#10b981' : 'transparent', background: 'white', fontWeight: '800' }}>
+                   <span>{c.icon}</span><span style={{ fontSize: '11px' }}>{c.label}</span>
+                 </button>
+               ))}
+             </div>
+             <textarea value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})} placeholder="상황을 입력해 주세요." style={{ padding: '18px', borderRadius: '20px', height: '100px', border: 'none', outline: 'none' }} />
+             <button disabled={isUploading} style={{ backgroundColor: '#10b981', color: 'white', padding: '18px', borderRadius: '20px', border: 'none', fontWeight: '900', fontSize: '1.1rem' }}>
+               {isUploading ? <Loader2 className="animate-spin" /> : "기록 완료"}
+             </button>
+          </form>
+        </div>
+
+        <div style={{ position: 'absolute', inset: 0, backgroundColor: '#f0fdf4', display: activeTab === 'list' ? 'block' : 'none', padding: '24px', overflowY: 'auto' }}>
+           <h2 style={{ fontSize: '1.5rem', fontWeight: '900', color: '#1e293b', marginBottom: '24px' }}>활동 피드</h2>
+           {reports.map(r => (
+             <div key={r.id} style={{ background: 'white', padding: '20px', borderRadius: '32px', marginBottom: '16px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '12px' }}>
+                   <span style={{ fontWeight: '900', color: '#1e293b' }}>{TRASH_CATEGORIES.find(c => c.id === r.category)?.icon} {r.userName}</span>
+                   {(r.userName === nickname || isAdmin) && <button onClick={() => deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'reports', r.id))} style={{ border: 'none', background: 'none', color: '#fca5a5' }}><Trash2 size={16}/></button>}
+                </div>
+                {r.image && <img src={r.image} style={{ width: '100%', height: '180px', objectFit: 'cover', borderRadius: '24px', marginBottom: '12px' }} />}
+                <p style={{ margin: 0, fontSize: '14px', color: '#475569' }}>{r.description}</p>
+             </div>
+           ))}
         </div>
       </main>
 
-      <nav style={{ height: '80px', backgroundColor: 'white', borderTop: '1px solid #d1fae5', display: 'flex', justifyContent: 'space-around', alignItems: 'center', paddingBottom: '15px' }}>
-        <button onClick={() => setActiveTab('map')} style={{ border: 'none', background: 'none', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
-          <MapPin size={24} color={activeTab === 'map' ? '#10b981' : '#cbd5e1'} fill={activeTab === 'map' ? '#10b981' : 'none'} strokeWidth={3}/>
-          <span style={{ fontSize: '9px', fontWeight: '900', color: activeTab === 'map' ? '#10b981' : '#cbd5e1' }}>MAP</span>
-        </button>
-        <button onClick={() => setActiveTab('list')} style={{ border: 'none', background: 'none', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
-          <List size={24} color={activeTab === 'list' ? '#10b981' : '#cbd5e1'} strokeWidth={3}/>
-          <span style={{ fontSize: '9px', fontWeight: '900', color: activeTab === 'list' ? '#10b981' : '#cbd5e1' }}>FEED</span>
-        </button>
-        <button onClick={() => setActiveTab('stats')} style={{ border: 'none', background: 'none', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
-          <BarChart3 size={24} color={activeTab === 'stats' ? '#10b981' : '#cbd5e1'} strokeWidth={3}/>
-          <span style={{ fontSize: '9px', fontWeight: '900', color: activeTab === 'stats' ? '#10b981' : '#cbd5e1' }}>STATS</span>
-        </button>
+      <nav style={{ height: '80px', backgroundColor: 'white', borderTop: '1px solid #d1fae5', display: 'flex', justifyContent: 'space-around', alignItems: 'center', paddingBottom: '10px' }}>
+        <button onClick={() => setActiveTab('map')} style={{ border: 'none', background: 'none', color: activeTab === 'map' ? '#10b981' : '#cbd5e1' }}><MapPin/><br/><span style={{fontSize:'10px', fontWeight:'900'}}>지도</span></button>
+        <button onClick={() => setActiveTab('list')} style={{ border: 'none', background: 'none', color: activeTab === 'list' ? '#10b981' : '#cbd5e1' }}><List/><br/><span style={{fontSize:'10px', fontWeight:'900'}}>피드</span></button>
       </nav>
-
-      <style>{`
-        body, html { margin: 0; padding: 0; background-color: #f0fdf4 !important; }
-        .leaflet-container { z-index: 1 !important; background: #f0fdf4 !important; }
-        .custom-pin { background: none !important; border: none !important; }
-        ::-webkit-scrollbar { width: 0px; background: transparent; }
-        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-        .animate-spin { animation: spin 1s linear infinite; }
-      `}</style>
+      <style>{`.leaflet-container { background: #f0fdf4 !important; } .custom-pin { background: none !important; border: none !important; }`}</style>
     </div>
   );
 }
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<App />);
