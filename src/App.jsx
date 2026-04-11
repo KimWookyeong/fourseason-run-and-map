@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import ReactDOM from 'react-dom/client';
 import { initializeApp } from 'firebase/app';
 import { 
   getAuth, 
@@ -34,12 +35,12 @@ import {
 } from 'lucide-react';
 
 /**
- * [사계절 런앤맵 - 최종 긴급 복구 및 기능 안정화 버전]
- * 1. 디자인: 정교한 네잎클로버 SVG 및 산뜻한 연녹색 테마 (#f0fdf4)
- * 2. 지도 로딩: 입장 즉시 지도 표시를 위한 렌더링 타이밍 최적화
+ * [사계절 런앤맵 - 최종 긴급 복구 및 실행 보장 버전]
+ * 1. 실행 오류 해결: ReactDOM 렌더링 코드 통합 및 초기 로딩 가드 추가
+ * 2. 디자인: 정교한 네잎클로버 SVG 및 산뜻한 연녹색 테마 고정
  * 3. 데이터 철벽 방어: 모든 DB 작업 전 실시간 인증 강제 완료 (Rule 3 준수)
- * 4. 상태 변경: 피드에서 '진행중' 클릭 시 '완료됨'으로 즉시 변경 기능
- * 5. 사진 기능: 카메라 촬영 및 갤러리 이미지 선택/압축 연동
+ * 4. 지도 로딩: 입장 즉시 지도 표시를 위한 초기화 로직 최적화
+ * 5. 상태 변경: 피드에서 '진행중' 클릭 시 '완료됨'으로 즉시 변경
  */
 
 const firebaseConfig = {
@@ -73,7 +74,7 @@ const GEUMJEONG_CENTER = [35.243, 129.092];
 const PrettyClover = ({ size = 50, color = "#10b981" }) => (
   <svg width={size} height={size} viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ filter: 'drop-shadow(0 4px 10px rgba(0,0,0,0.1))' }}>
     <path d="M50 50C50 32 38 20 25 20C12 20 0 32 0 50C0 68 12 80 25 80C38 80 50 68 50 50Z" fill={color} />
-    <path d="M50 50C68 50 80 38 80 25C80 12 68 0 50 0C32 0 20 12 20 25C20 38 32 50 50 50Z" fill={color} />
+    <path d="M50 50C68 50 80 38 80 25C80 12 68 0 50 0C32 0 22 9 22 22C22 35 32 50 50 50Z" fill={color} />
     <path d="M50 50C50 68 62 80 75 80C88 80 100 68 100 50C100 32 88 20 75 20C62 20 50 32 50 50Z" fill={color} />
     <path d="M50 50C32 50 20 62 20 75C20 88 32 100 50 100C68 100 80 88 80 75C80 62 68 50 50 50Z" fill={color} />
     <circle cx="50" cy="50" r="6" fill="white" opacity="0.4" />
@@ -356,7 +357,7 @@ export default function App() {
 
       {/* 메인 영역 */}
       <main style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
-        {/* Tab 1: 지도 (항상 렌더링하되 숨김/표시 처리하여 Leaflet 충돌 방지) */}
+        {/* Tab 1: 지도 */}
         <div style={{ position: 'absolute', inset: 0, visibility: activeTab === 'map' ? 'visible' : 'hidden', zIndex: 10 }}>
           <div ref={mapContainerRef} style={{ width: '100%', height: '100%', minHeight: '100%', backgroundColor: '#f0fdf4' }} />
           <button onClick={() => setActiveTab('add')} style={{ position: 'absolute', bottom: '35px', left: '50%', transform: 'translateX(-50%)', backgroundColor: '#1e293b', color: 'white', border: 'none', fontWeight: '900', borderRadius: '50px', padding: '20px 45px', fontSize: '1.2rem', zIndex: 1001, boxShadow: '0 25px 35px -5px rgba(0, 0, 0, 0.3)', cursor: 'pointer' }}>기록하기 +</button>
@@ -463,4 +464,13 @@ export default function App() {
       `}</style>
     </div>
   );
+}
+
+// ---------------------------------------------------------
+// [핵심] 이 코드가 있어야 실제 앱이 주소에서 실행됩니다.
+// ---------------------------------------------------------
+const rootElement = document.getElementById('root');
+if (rootElement) {
+  const root = ReactDOM.createRoot(rootElement);
+  root.render(<App />);
 }
