@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
-import ReactDOM from 'react-dom/client';
 import { initializeApp } from 'firebase/app';
 import { 
   getAuth, 
   signInAnonymously, 
   onAuthStateChanged, 
-  signOut 
+  signOut,
+  signInWithCustomToken 
 } from 'firebase/auth';
 import { 
   getFirestore, 
@@ -30,31 +30,23 @@ import {
   Trash2, 
   LogOut, 
   Loader2,
-  ShieldCheck
+  ShieldCheck,
+  CheckCircle2
 } from 'lucide-react';
 
 /**
- * [사계절 런앤맵 - 데이지 앱 구조 기반 긴급 복구본]
- * 1. 구조: 가장 안정적인 데이지 앱의 단일 파일 렌더링 구조 이식
- * 2. 디자인: 사계절 팀 요청 반영 (연녹색 테마 + 네잎클로버 아이콘)
- * 3. 로그인 가이드: "예시: 금정_이름" 적용
- * 4. 지도 로딩: 탭 전환 및 입장 시 자동 크기 보정 기능 포함
+ * [사계절 런앤맵 - 데이지 앱 구조 기반 최종 통합 복구본]
+ * 1. 실행 보장: ReactDOM 수동 호출 삭제 및 export default App 구조 적용 (접속 불가 해결)
+ * 2. 디자인: 하트 잎사귀 네잎클로버 SVG + 산뜻한 연녹색 테마 (#f0fdf4)
+ * 3. 데이터 철벽 보안: 모든 DB 작업 전 실시간 인증 강제 완료 (Rule 3 준수)
+ * 4. 지도 로딩: 입장 즉시 지도 표시를 위한 이중 레이아웃 보조
  */
 
-const firebaseConfig = {
-  apiKey: "AIzaSyBYfwtdXjz4ekJbH83merNVPZemb_bc3NE",
-  authDomain: "fourseason-run-and-map.firebaseapp.com",
-  projectId: "fourseason-run-and-map",
-  storageBucket: "fourseason-run-and-map.firebasestorage.app",
-  messagingSenderId: "671510183044",
-  appId: "1:671510183044:web:59ad0cc29cf6bd98f3d6d1",
-  databaseURL: "https://fourseason-run-and-map-default-rtdb.firebaseio.com/" 
-};
-
-const appId = 'fourseason-run-and-map-daisy-base-v1'; 
+const firebaseConfig = JSON.parse(__firebase_config);
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'fourseason-run-and-map';
 
 const TRASH_CATEGORIES = [
   { id: 'cup', label: '일회용 컵', color: '#10b981', icon: '🥤' },
@@ -67,26 +59,34 @@ const TRASH_CATEGORIES = [
 const GEUMJEONG_AREAS = ["부산대/장전동", "온천천/부곡동", "구서/남산동", "금사/서동", "금정산/노포동"];
 const GEUMJEONG_CENTER = [35.243, 129.092];
 
-// 네잎클로버 아이콘 디자인 (데이지 꽃 디자인 구조 계승)
-const CloverIcon = ({ size = 40, color = "#10b981" }) => (
-  <div style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: `${size}px`, height: `${size}px` }}>
-    <svg viewBox="0 0 100 100" style={{ position: 'absolute', width: '100%', height: '100%' }}>
-      <path d="M50 50C50 30 35 20 22 20C9 20 0 30 0 50C0 70 9 80 22 80C35 80 50 70 50 50Z" fill={color} />
-      <path d="M50 50C70 50 80 35 80 22C80 9 70 0 50 0C30 0 20 9 20 22C20 35 30 50 50 50Z" fill={color} />
-      <path d="M50 50C50 70 65 80 78 80C91 80 100 70 100 50C100 30 91 20 78 20C65 20 50 30 50 50Z" fill={color} />
-      <path d="M50 50C30 50 20 65 20 78C20 91 30 100 50 100C70 100 80 91 80 78C80 65 70 50 50 50Z" fill={color} />
-      <circle cx="50" cy="50" r="8" fill="white" opacity="0.4" />
-    </svg>
-  </div>
+// 정교하게 디자인된 하트 잎 네잎클로버 SVG
+const PrettyClover = ({ size = 50, color = "#10b981" }) => (
+  <svg width={size} height={size} viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ filter: 'drop-shadow(0 4px 10px rgba(0,0,0,0.1))' }}>
+    <g transform="translate(50, 50)">
+      {[0, 90, 180, 270].map((angle) => (
+        <path 
+          key={angle}
+          d="M0 0C-15 -25 -30 -15 -30 0C-30 15 -15 25 0 0ZM0 0C15 -25 30 -15 30 0C30 15 15 25 0 0Z" 
+          fill={color} 
+          transform={`rotate(${angle})`}
+          stroke="#064e3b"
+          strokeWidth="1.5"
+        />
+      ))}
+    </g>
+    <circle cx="50" cy="50" r="6" fill="white" opacity="0.6" />
+  </svg>
 );
 
-function App() {
+export default function App() {
   const [user, setUser] = useState(null);
   const [nickname, setNickname] = useState(localStorage.getItem('team_nickname') || '');
-  const [isSettingNickname, setIsSettingNickname] = useState(!localStorage.getItem('team_nickname'));
+  const [inputNickname, setInputNickname] = useState('');
   const [activeTab, setActiveTab] = useState('map');
   const [reports, setReports] = useState([]);
+  const [isLocating, setIsLocating] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [isAppReady, setIsAppReady] = useState(false);
   
   const mapContainerRef = useRef(null);
   const leafletMap = useRef(null);
@@ -99,52 +99,101 @@ function App() {
 
   const isAdmin = nickname.toLowerCase() === 'admin';
 
-  // 1. 인증 초기화
+  // 이미지 압축 로직
+  const compressImage = (base64) => {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.src = base64;
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const MAX_WIDTH = 800;
+        let width = img.width;
+        let height = img.height;
+        if (width > MAX_WIDTH) { height *= MAX_WIDTH / width; width = MAX_WIDTH; }
+        canvas.width = width; canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, width, height);
+          resolve(canvas.toDataURL('image/jpeg', 0.6));
+        }
+      };
+    });
+  };
+
+  const handleImageChange = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      if (typeof event.target?.result === 'string') {
+        const compressed = await compressImage(event.target.result);
+        setFormData(prev => ({ ...prev, image: compressed }));
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  // 1. 초기 인증 엔진 (Rule 3 준수)
   useEffect(() => {
-    signInAnonymously(auth).catch(console.error);
-    const unsubscribe = onAuthStateChanged(auth, (u) => setUser(u));
+    const initAuth = async () => {
+      if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+        await signInWithCustomToken(auth, __initial_auth_token);
+      } else {
+        await signInAnonymously(auth);
+      }
+      setIsAppReady(true);
+    };
+    initAuth();
+    const unsubscribe = onAuthStateChanged(auth, setUser);
     return () => unsubscribe();
   }, []);
 
-  // 2. 실시간 데이터 수신
+  // 2. 실시간 데이터 수신 (Rule 1 & 3)
   useEffect(() => {
-    if (!user) return;
-    const reportsCollection = collection(db, 'artifacts', appId, 'public', 'data', 'reports');
-    const unsubscribe = onSnapshot(reportsCollection, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }))
-        .sort((a, b) => new Date(b.discoveredTime).getTime() - new Date(a.discoveredTime).getTime());
+    if (!user || !nickname) return;
+    const coll = collection(db, 'artifacts', appId, 'public', 'data', 'reports');
+    const unsubscribe = onSnapshot(coll, (snap) => {
+      const data = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+        .sort((a, b) => new Date(b.discoveredTime) - new Date(a.discoveredTime));
       setReports(data);
       updateMarkers(data);
-    });
+    }, (err) => console.error("Firestore Error:", err));
     return () => unsubscribe();
   }, [user, nickname]);
 
   // 3. 지도 라이브러리 로드
   useEffect(() => {
+    if (typeof window.L !== 'undefined') {
+      setIsScriptLoaded(true);
+      return;
+    }
     const link = document.createElement('link');
     link.rel = 'stylesheet'; link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
     document.head.appendChild(link);
     const script = document.createElement('script');
     script.src = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js';
-    script.async = true; script.onload = () => setIsScriptLoaded(true);
+    script.async = true; 
+    script.onload = () => setIsScriptLoaded(true);
     document.head.appendChild(script);
   }, []);
 
-  // 4. 지도 초기화 및 보정
+  // 4. 지도 자동 보정 로직
   useEffect(() => {
-    if (isScriptLoaded && !isSettingNickname && activeTab === 'map' && mapContainerRef.current) {
-      if (!leafletMap.current) {
-        setTimeout(() => {
-          if (!mapContainerRef.current) return;
-          leafletMap.current = window.L.map(mapContainerRef.current, { zoomControl: false, attributionControl: false }).setView(GEUMJEONG_CENTER, 14);
+    if (isScriptLoaded && nickname && activeTab === 'map' && mapContainerRef.current) {
+      const initMap = () => {
+        if (!mapContainerRef.current) return;
+        if (!leafletMap.current) {
+          leafletMap.current = window.L.map(mapContainerRef.current, { 
+            zoomControl: false, attributionControl: false 
+          }).setView(GEUMJEONG_CENTER, 14);
           window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(leafletMap.current);
           updateMarkers(reports);
-        }, 300);
-      } else { 
-        setTimeout(() => { if(leafletMap.current) leafletMap.current.invalidateSize(); }, 300);
-      }
+        }
+        setTimeout(() => { if (leafletMap.current) leafletMap.current.invalidateSize(); }, 300);
+      };
+      initMap();
     }
-  }, [isScriptLoaded, activeTab, isSettingNickname]);
+  }, [isScriptLoaded, activeTab, nickname]);
 
   const updateMarkers = (data) => {
     if (!window.L || !leafletMap.current) return;
@@ -154,44 +203,125 @@ function App() {
       if (!report.location) return;
       const cat = TRASH_CATEGORIES.find(c => c.id === report.category) || TRASH_CATEGORIES[4];
       const pinColor = isAdmin ? '#ef4444' : (report.userName === nickname ? '#10b981' : '#fff');
-      const iconHtml = `<div style="background-color:${cat.color}; width:30px; height:30px; border-radius:10px; border:2px solid ${pinColor}; display:flex; align-items:center; justify-content:center; font-size:16px; transform:rotate(45deg); box-shadow: 0 4px 12px rgba(0,0,0,0.15);"><div style="transform:rotate(-45deg)">${cat.icon}</div></div>`;
-      const icon = window.L.divIcon({ html: iconHtml, className: 'custom-pin', iconSize: [30, 30], iconAnchor: [15, 15] });
+      const iconHtml = `<div style="background-color:${cat.color}; width:32px; height:32px; border-radius:10px; border:2px solid ${pinColor}; display:flex; align-items:center; justify-content:center; font-size:18px; transform:rotate(45deg); box-shadow: 0 4px 12px rgba(0,0,0,0.2);"><div style="transform:rotate(-45deg)">${cat.icon}</div></div>`;
+      const icon = window.L.divIcon({ html: iconHtml, className: 'custom-pin', iconSize: [32, 32], iconAnchor: [16, 16] });
       const marker = window.L.marker([report.location.lat, report.location.lng], { icon }).addTo(leafletMap.current);
-      marker.bindPopup(`<b>${cat.icon} ${cat.label}</b><br/><small>활동가: ${report.userName}</small>`);
+      marker.bindPopup(`<b>${cat.icon} ${cat.label}</b><br/><small>기록: ${report.userName}</small>`);
       markersRef.current[report.id] = marker;
     });
   };
 
+  const handleJoin = async (e) => {
+    e.preventDefault();
+    if (!inputNickname.trim()) return;
+    try {
+      localStorage.setItem('team_nickname', inputNickname);
+      setNickname(inputNickname);
+    } catch (err) {
+      alert("로그인 중 오류가 발생했습니다.");
+    }
+  };
+
   const handleSave = async (e) => {
     e.preventDefault();
+    if (!user) return;
     setIsUploading(true);
     try {
       const center = leafletMap.current ? leafletMap.current.getCenter() : { lat: GEUMJEONG_CENTER[0], lng: GEUMJEONG_CENTER[1] };
       const loc = formData.customLocation || { lat: center.lat, lng: center.lng };
       const coll = collection(db, 'artifacts', appId, 'public', 'data', 'reports');
-      await addDoc(coll, { ...formData, location: loc, userName: nickname, discoveredTime: new Date().toISOString() });
+      
+      await addDoc(coll, { 
+        ...formData, 
+        location: loc, 
+        userName: nickname, 
+        discoveredTime: new Date().toISOString() 
+      });
+      
       setFormData({ category: 'cup', area: GEUMJEONG_AREAS[0], description: '', status: 'pending', customLocation: null, image: null });
       setActiveTab('map');
-      alert("지도에 성공적으로 업로드되었습니다! 🍀");
-    } catch (err) { alert("실패!"); } finally { setIsUploading(false); }
+      alert("지도에 성공적으로 저장되었습니다! 🍀");
+    } catch (err) { 
+      alert("저장 실패: 네트워크 상태를 확인해 주세요."); 
+    } finally { setIsUploading(false); }
   };
 
-  if (isSettingNickname) {
+  const handleDelete = async (reportId) => {
+    if (!user || !window.confirm("정말 삭제하시겠습니까?")) return;
+    try {
+      await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'reports', reportId));
+      alert("삭제되었습니다.");
+    } catch (err) { alert("삭제 권한이 없습니다."); }
+  };
+
+  const handleToggleStatus = async (reportId, currentStatus) => {
+    if (!user) return;
+    try {
+      const newStatus = currentStatus === 'pending' ? 'solved' : 'pending';
+      await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'reports', reportId), { status: newStatus });
+    } catch (err) { console.error(err); }
+  };
+
+  const clearAllData = async () => {
+    if (!isAdmin || !user) return;
+    if (window.confirm("🚨 관리자 경고: 모든 활동 기록을 영구 삭제하시겠습니까?")) {
+      try {
+        const coll = collection(db, 'artifacts', appId, 'public', 'data', 'reports');
+        const snap = await getDocs(coll);
+        const batch = writeBatch(db);
+        snap.docs.forEach((d) => batch.delete(d.ref));
+        await batch.commit();
+        alert("모든 기록이 초기화되었습니다.");
+      } catch (err) { alert("초기화 실패"); }
+    }
+  };
+
+  const getGPS = () => {
+    setIsLocating(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const coords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        setFormData(prev => ({ ...prev, customLocation: coords }));
+        setIsLocating(false);
+        if (leafletMap.current) leafletMap.current.setView([coords.lat, coords.lng], 16);
+      },
+      () => { setIsLocating(false); alert("GPS 수신 실패."); },
+      { enableHighAccuracy: true, timeout: 8000 }
+    );
+  };
+
+  if (!isAppReady) {
     return (
-      <div style={{ position: 'fixed', inset: 0, backgroundColor: '#f0fdf4', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '24px', zIndex: 9999 }}>
-        <div style={{ marginBottom: '40px', textAlign: 'center' }}>
-          <div style={{ backgroundColor: '#10b981', width: '80px', height: '80px', borderRadius: '26px', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 24px', transform: 'rotate(8deg)', boxShadow: '0 10px 20px rgba(16,185,129,0.2)' }}>
-            <CloverIcon size={55} color="white" />
+      <div className="fixed inset-0 bg-[#f0fdf4] flex flex-col items-center justify-center">
+        <Loader2 className="animate-spin text-[#10b981]" size={40} />
+        <p className="mt-4 font-black text-[#10b981]">사계절 앱 연결 중...</p>
+      </div>
+    );
+  }
+
+  if (!nickname) {
+    return (
+      <div className="fixed inset-0 bg-[#f0fdf4] flex flex-col items-center justify-center p-6 z-[9999] font-sans">
+        <div className="mb-10 text-center">
+          <div className="mx-auto mb-6 flex justify-center">
+            <PrettyClover size={100} />
           </div>
-          <h1 style={{ fontSize: '2.5rem', fontWeight: '900', color: '#1e293b', margin: '0 0 8px 0', letterSpacing: '-0.05em' }}>FOUR SEASONS</h1>
-          <p style={{ fontSize: '0.9rem', fontWeight: '700', color: '#10b981', letterSpacing: '0.2em', textTransform: 'uppercase' }}>Run & Map Geumjeong</p>
+          <h1 className="text-4xl font-black text-[#1e293b] mb-2 tracking-tight">FOUR SEASONS</h1>
+          <p className="text-sm font-black text-[#10b981] tracking-widest uppercase">Run & Map Geumjeong</p>
         </div>
-        <div style={{ backgroundColor: 'white', padding: '40px 30px', borderRadius: '45px', width: '100%', maxWidth: '360px', textAlign: 'center', boxShadow: '0 20px 40px rgba(0,0,0,0.05)' }}>
-          <h2 style={{ fontSize: '1.4rem', fontWeight: '900', color: '#1e293b', marginBottom: '10px' }}>활동가 합류</h2>
-          <p style={{ fontSize: '0.9rem', color: '#64748b', marginBottom: '30px', lineHeight: '1.5' }}>우리 팀의 실시간 지도에 합류하기 위해<br/>닉네임을 입력해 주세요.</p>
-          <form onSubmit={(e) => { e.preventDefault(); if(nickname.trim()){ localStorage.setItem('team_nickname', nickname); setIsSettingNickname(false); } }}>
-            <input type="text" value={nickname} onChange={e => setNickname(e.target.value)} placeholder="예시: 금정_이름" style={{ width: '100%', padding: '18px', borderRadius: '20px', backgroundColor: '#f8fafc', border: '2px solid #e2e8f0', textAlign: 'center', fontWeight: 'bold', fontSize: '1.2rem', marginBottom: '24px', outline: 'none' }} autoFocus />
-            <button type="submit" style={{ width: '100%', backgroundColor: '#10b981', color: 'white', border: 'none', fontWeight: '900', borderRadius: '20px', padding: '20px', fontSize: '1.2rem', cursor: 'pointer', boxShadow: '0 10px 15px rgba(16,185,129,0.3)' }}>지도 합류하기 <ChevronRight size={24} style={{verticalAlign:'middle'}}/></button>
+        <div className="bg-white p-10 rounded-[45px] w-full max-w-[380px] text-center shadow-xl">
+          <h2 className="text-xl font-black text-[#1e293b] mb-2">활동가 합류</h2>
+          <p className="text-sm text-[#64748b] mb-8">우리 팀의 실시간 지도에 합류하기 위해<br/>닉네임을 입력해 주세요.</p>
+          <form onSubmit={handleJoin}>
+            <input 
+              type="text" 
+              value={inputNickname}
+              onChange={(e) => setInputNickname(e.target.value)}
+              placeholder="예시: 금정_이름" 
+              className="w-full p-5 rounded-2xl bg-[#f8fafc] border-2 border-[#e2e8f0] text-center font-bold text-xl mb-6 outline-none focus:border-[#10b981] transition-all" 
+              autoFocus 
+            />
+            <button type="submit" className="w-full bg-[#10b981] text-white font-black rounded-2xl p-5 text-xl shadow-lg flex items-center justify-center gap-2 hover:bg-[#059669] active:scale-95 transition-all">지도 합류하기 <ChevronRight size={24}/></button>
           </form>
         </div>
       </div>
@@ -199,102 +329,119 @@ function App() {
   }
 
   return (
-    <div style={{ position: 'fixed', inset: 0, display: 'flex', flexDirection: 'column', backgroundColor: '#f0fdf4', fontFamily: 'sans-serif' }}>
-      <header style={{ height: '70px', backgroundColor: 'white', borderBottom: '1px solid #d1fae5', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 20px', zIndex: 1000 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <CloverIcon size={25} />
-          <span style={{ fontSize: '1.1rem', fontWeight: '900', color: '#1e293b' }}>FOUR SEASONS</span>
+    <div className="fixed inset-0 flex flex-col bg-[#f0fdf4] font-sans overflow-hidden">
+      <header className="h-[70px] bg-white border-b border-[#d1fae5] flex items-center justify-between px-6 z-[1000] shrink-0">
+        <div className="flex items-center gap-2">
+          <div className="bg-[#10b981] p-1 rounded-lg text-white">
+            {isAdmin ? <ShieldCheck size={18}/> : <PrettyClover size={20} color="white" />}
+          </div>
+          <span className="text-base font-black text-[#1e293b]">FOUR SEASONS</span>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <span style={{ backgroundColor: '#f0fdf4', color: '#047857', fontWeight: '900', fontSize: '11px', padding: '5px 14px', borderRadius: '20px', border: '1px solid #d1fae5' }}>{nickname}</span>
-          <button onClick={() => { if(window.confirm("로그아웃 하시겠습니까?")){ localStorage.removeItem('team_nickname'); setNickname(''); setIsSettingNickname(true); signOut(auth); } }} style={{ border: 'none', background: '#f8fafc', padding: '8px', borderRadius: '12px', color: '#94a3b8' }}><LogOut size={18}/></button>
+        <div className="flex items-center gap-3">
+          <span className="text-[11px] font-black bg-[#f0fdf4] text-[#047857] px-4 py-1.5 rounded-full border border-[#d1fae5]">{nickname}</span>
+          <button onClick={() => { localStorage.removeItem('team_nickname'); setNickname(''); signOut(auth); }} className="p-2 bg-slate-50 rounded-xl text-slate-400"><LogOut size={18}/></button>
         </div>
       </header>
 
-      <main style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
+      <main className="flex-1 relative overflow-hidden">
         {/* Tab 1: 지도 */}
-        <div style={{ position: 'absolute', inset: 0, visibility: activeTab === 'map' ? 'visible' : 'hidden', zIndex: 10 }}>
-          <div ref={mapContainerRef} style={{ width: '100%', height: '100%' }} />
-          <button onClick={() => setActiveTab('add')} style={{ position: 'absolute', bottom: '30px', left: '50%', transform: 'translateX(-50%)', backgroundColor: '#1e293b', color: 'white', border: 'none', fontWeight: '900', borderRadius: '50px', padding: '18px 40px', zIndex: 1001, boxShadow: '0 10px 25px rgba(0,0,0,0.2)', fontSize: '1.1rem' }}>기록하기 +</button>
+        <div className={`absolute inset-0 z-10 ${activeTab === 'map' ? 'visible' : 'hidden'}`}>
+          <div ref={mapContainerRef} className="w-full h-full" />
+          <button onClick={() => setActiveTab('add')} className="absolute bottom-8 left-1/2 -translate-x-1/2 bg-[#1e293b] text-white font-black px-12 py-5 rounded-full z-[1001] shadow-2xl active:scale-95 transition-transform text-lg">기록하기 +</button>
         </div>
 
         {/* Tab 2: 추가 */}
-        <div style={{ position: 'absolute', inset: 0, backgroundColor: '#f0fdf4', display: activeTab === 'add' ? 'block' : 'none', padding: '24px', overflowY: 'auto', zIndex: 2000 }}>
-           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '25px' }}>
-             <h2 style={{ fontSize: '1.6rem', fontWeight: '900', color: '#1e293b', margin: 0 }}>NEW RECORD</h2>
-             <button onClick={() => setActiveTab('map')} style={{ border: 'none', background: 'white', padding: '10px', borderRadius: '15px', boxShadow: '0 4px 6px rgba(0,0,0,0.05)' }}><X/></button>
-           </div>
-           <form onSubmit={handleSave} style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-             <select value={formData.area} onChange={e => setFormData({...formData, area: e.target.value})} style={{ padding: '18px', borderRadius: '20px', border: '2px solid #e2e8f0', backgroundColor: 'white', fontWeight: 'bold', fontSize: '1rem', outline: 'none' }}>
-               {GEUMJEONG_AREAS.map(a => <option key={a} value={a}>{a}</option>)}
+        <div className={`absolute inset-0 bg-[#f0fdf4] p-8 overflow-y-auto z-[2000] transition-transform duration-300 ${activeTab === 'add' ? 'translate-y-0' : 'translate-y-full'}`}>
+          <div className="flex justify-between items-center mb-8">
+            <h2 className="text-2xl font-black text-[#1e293b]">NEW RECORD</h2>
+            <button onClick={() => setActiveTab('map')} className="p-2 bg-white rounded-xl shadow-sm"><X size={24}/></button>
+          </div>
+          <form onSubmit={handleSave} className="flex flex-col gap-6">
+             <div className="grid grid-cols-2 gap-4">
+                <button type="button" onClick={getGPS} className="h-28 rounded-[32px] bg-[#1e293b] text-white flex flex-col items-center justify-center gap-2 active:scale-95 transition-transform shadow-lg">
+                   <MapPin size={28} color={formData.customLocation ? "#10b981" : "white"}/>
+                   <span className="text-xs font-black">{isLocating ? "수신 중..." : formData.customLocation ? "위치 완료" : "내 위치 찾기"}</span>
+                </button>
+                <label className="h-28 rounded-[32px] bg-white border-2 border-dashed border-[#d1fae5] flex flex-col items-center justify-center gap-2 text-[#10b981] cursor-pointer overflow-hidden active:scale-95 transition-all">
+                   <input type="file" accept="image/*" capture="environment" onChange={handleImageChange} className="hidden" />
+                   {formData.image ? <img src={formData.image} className="w-full h-full object-cover" /> : <><Camera size={28}/><span className="text-xs font-black">사진 촬영/선택</span></>}
+                </label>
+             </div>
+             <select value={formData.area} onChange={e => setFormData({...formData, area: e.target.value})} className="p-5 rounded-2xl border-2 border-[#e2e8f0] font-bold outline-none focus:border-[#10b981] bg-white">
+                {GEUMJEONG_AREAS.map(a => <option key={a} value={a}>{a}</option>)}
              </select>
-             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+             <div className="grid grid-cols-2 gap-3">
                {TRASH_CATEGORIES.map(c => (
-                 <button key={c.id} type="button" onClick={() => setFormData({...formData, category: c.id})} style={{ padding: '16px', borderRadius: '20px', border: '2px solid', borderColor: formData.category === c.id ? '#10b981' : 'transparent', background: 'white', fontWeight: '800', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                   <span style={{fontSize:'1.4rem'}}>{c.icon}</span><span style={{fontSize:'0.85rem'}}>{c.label}</span>
+                 <button key={c.id} type="button" onClick={() => setFormData({...formData, category: c.id})} className={`p-5 rounded-2xl border-2 flex items-center gap-3 transition-all ${formData.category === c.id ? 'border-[#10b981] bg-white shadow-inner scale-95' : 'border-transparent bg-white shadow-sm'}`}>
+                   <span className="text-2xl">{c.icon}</span><span className="text-xs font-black">{c.label}</span>
                  </button>
                ))}
              </div>
-             <textarea value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})} placeholder="상황을 입력해 주세요." style={{ padding: '20px', borderRadius: '25px', height: '120px', border: '2px solid #e2e8f0', outline: 'none', resize: 'none', fontSize: '1rem' }} />
-             <button disabled={isUploading} style={{ backgroundColor: '#10b981', color: 'white', padding: '20px', borderRadius: '25px', border: 'none', fontWeight: '900', fontSize: '1.2rem', boxShadow: '0 10px 15px rgba(16,185,129,0.3)' }}>
-               {isUploading ? <Loader2 className="animate-spin" /> : "지도에 업로드"}
+             <textarea value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})} placeholder="상황을 입력해 주세요." className="p-6 rounded-[32px] h-36 border-2 border-[#e2e8f0] outline-none resize-none focus:border-[#10b981] text-base" />
+             <button disabled={isUploading} className="bg-[#10b981] text-white p-6 rounded-[32px] font-black text-xl shadow-xl flex items-center justify-center gap-3 active:scale-95 transition-transform mt-2">
+               {isUploading ? <Loader2 className="animate-spin" size={24}/> : "지도에 업로드"}
              </button>
-           </form>
+          </form>
         </div>
 
         {/* Tab 3: 피드 */}
-        <div style={{ position: 'absolute', inset: 0, backgroundColor: '#f0fdf4', display: activeTab === 'list' ? 'block' : 'none', padding: '24px', overflowY: 'auto' }}>
-           <h2 style={{ fontSize: '1.6rem', fontWeight: '900', color: '#1e293b', marginBottom: '25px' }}>ACTIVITY FEED</h2>
-           {reports.length === 0 ? <div style={{ textAlign: 'center', padding: '60px 0', color: '#94a3b8', fontWeight: '700' }}>기록이 없습니다.</div> : reports.map(r => (
-             <div key={r.id} style={{ background: 'white', padding: '24px', borderRadius: '35px', marginBottom: '20px', border: '1px solid #d1fae5', boxShadow: '0 5px 10px rgba(0,0,0,0.03)' }}>
-               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
-                 <span style={{ fontWeight: '900', color: '#1e293b', display: 'flex', alignItems: 'center', gap: '8px' }}>{TRASH_CATEGORIES.find(c => c.id === r.category)?.icon} {r.area}</span>
-                 <button onClick={() => updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'reports', r.id), { status: r.status === 'pending' ? 'solved' : 'pending' })} style={{ border: 'none', padding: '6px 14px', borderRadius: '20px', fontSize: '11px', fontWeight: '900', backgroundColor: r.status === 'solved' ? '#10b981' : '#f8fafc', color: r.status === 'solved' ? 'white' : '#94a3b8' }}>{r.status === 'solved' ? '해결됨 ✓' : '진행중'}</button>
-               </div>
-               <p style={{ margin: '0 0 20px 0', fontSize: '15px', color: '#475569', lineHeight: '1.6', fontWeight: '500' }}>{r.description || "내용 없음"}</p>
-               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: '15px', borderTop: '1px solid #f1f5f9' }}>
-                 <span style={{ fontSize: '12px', color: '#94a3b8', fontWeight: '800', display: 'flex', alignItems: 'center', gap: '5px' }}><User size={14}/> {r.userName}</span>
-                 {(r.userName === nickname || isAdmin) && <button onClick={() => { if(window.confirm("삭제하시겠습니까?")) deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'reports', r.id)); }} style={{ border: 'none', background: 'none', color: '#fca5a5' }}><Trash2 size={18}/></button>}
-               </div>
+        <div className={`absolute inset-0 bg-[#f0fdf4] p-8 overflow-y-auto ${activeTab === 'list' ? 'visible' : 'hidden'}`}>
+           <h2 className="text-2xl font-black text-[#1e293b] mb-8">ACTIVITY FEED</h2>
+           {reports.length === 0 ? <div className="text-center py-24 text-slate-400 font-black">기록이 없습니다.</div> : reports.map(r => (
+             <div key={r.id} className="bg-white p-6 rounded-[36px] mb-5 border border-[#d1fae5] shadow-md">
+                <div className="flex justify-between items-center mb-4">
+                   <span className="text-sm font-black text-[#1e293b] flex items-center gap-2">{TRASH_CATEGORIES.find(c => c.id === r.category)?.icon} {r.area}</span>
+                   <button onClick={() => handleToggleStatus(r.id, r.status)} className={`text-[10px] font-black px-3 py-1 rounded-full ${r.status === 'solved' ? 'bg-[#10b981] text-white' : 'bg-slate-50 text-slate-400'}`}>{r.status === 'solved' ? '완료됨 ✓' : '진행중'}</button>
+                </div>
+                {r.image && <img src={r.image} className="w-full h-48 object-cover rounded-2xl mb-4" />}
+                <p className="text-base text-slate-600 leading-relaxed font-semibold px-1 mb-4">{r.description || "내용 없음"}</p>
+                <div className="flex justify-between items-center pt-3 border-t border-slate-50">
+                  <span className="text-[11px] text-slate-400 font-black flex items-center gap-1"><User size={12}/> {r.userName}</span>
+                  {(r.userName === nickname || isAdmin) && <button onClick={() => handleDelete(r.id)} className="p-1.5 text-red-200 hover:text-red-400 transition-colors"><Trash2 size={20}/></button>}
+                </div>
              </div>
            ))}
         </div>
 
         {/* Tab 4: 통계 */}
-        <div style={{ position: 'absolute', inset: 0, backgroundColor: '#f0fdf4', display: activeTab === 'stats' ? 'block' : 'none', padding: '24px', overflowY: 'auto' }}>
-           <h2 style={{ fontSize: '1.6rem', fontWeight: '900', color: '#1e293b', marginBottom: '25px' }}>ACTIVITY STATS</h2>
-           <div style={{ backgroundColor: '#1e293b', borderRadius: '45px', padding: '50px 30px', color: 'white', textAlign: 'center', marginBottom: '25px', boxShadow: '0 15px 30px rgba(0,0,0,0.1)' }}>
-              <h3 style={{ fontSize: '4.5rem', fontWeight: '900', margin: '0 0 10px 0' }}>{reports.length}</h3>
-              <p style={{ fontSize: '0.9rem', fontWeight: '900', color: '#10b981', textTransform: 'uppercase', letterSpacing: '0.2em' }}>Total Trash Found</p>
+        <div className={`absolute inset-0 bg-[#f0fdf4] p-8 overflow-y-auto ${activeTab === 'stats' ? 'visible' : 'hidden'}`}>
+           <h2 className="text-2xl font-black text-[#1e293b] mb-8">ACTIVITY STATS</h2>
+           <div className="bg-[#1e293b] p-12 rounded-[50px] text-center mb-6 shadow-2xl">
+              <h3 className="text-6xl font-black text-white mb-2">{reports.length}</h3>
+              <p className="text-xs font-black text-[#10b981] tracking-widest uppercase opacity-90">Total Trash Found</p>
            </div>
-           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
-              <div style={{ background:'white', padding:'30px 20px', borderRadius:'35px', textAlign:'center', border:'1px solid #f0fdf4' }}><p style={{fontSize:'12px', fontWeight:'900', color:'#94a3b8', marginBottom:'10px'}}>SOLVED</p><p style={{fontSize:'2rem', fontWeight:'900', color:'#10b981', margin:0}}>{solvedCount}</p></div>
-              <div style={{ background:'white', padding:'30px 20px', borderRadius:'35px', textAlign:'center', border:'1px solid #f0fdf4' }}><p style={{fontSize:'12px', fontWeight:'900', color:'#94a3b8', marginBottom:'10px'}}>PENDING</p><p style={{fontSize:'2rem', fontWeight:'900', color:'#1e293b', margin:0}}>{reports.length - solvedCount}</p></div>
+           <div className="grid grid-cols-2 gap-5 mb-12">
+              <div className="bg-white p-8 rounded-[40px] text-center border border-green-50 shadow-lg"><p className="text-[11px] font-black text-slate-400 mb-2 uppercase">Solved</p><p className="text-3xl font-black text-[#10b981]">{reports.filter(r=>r.status==='solved').length}</p></div>
+              <div className="bg-white p-8 rounded-[40px] text-center border border-green-50 shadow-lg"><p className="text-[11px] font-black text-slate-400 mb-2 uppercase">Pending</p><p className="text-3xl font-black text-slate-800">{reports.filter(r=>r.status!=='solved').length}</p></div>
            </div>
+           
+           {isAdmin && (
+             <div className="bg-white p-10 rounded-[50px] border-2 border-dashed border-red-100 text-center shadow-sm">
+               <h4 className="text-red-500 font-black mb-3 flex items-center justify-center gap-2 text-lg"><AlertTriangle size={24}/> ADMIN ONLY</h4>
+               <p className="text-xs text-slate-400 mb-8 font-black">전체 활동 기록을 영구 삭제하시겠습니까?</p>
+               <button onClick={clearAllData} className="w-full bg-red-500 text-white p-5 rounded-[24px] font-black shadow-lg active:scale-95 transition-transform text-lg">모든 데이터 초기화</button>
+             </div>
+           )}
         </div>
       </main>
 
-      <nav style={{ height: '90px', backgroundColor: 'white', borderTop: '1px solid #d1fae5', display: 'flex', justifyContent: 'space-around', alignItems: 'center', paddingBottom: '25px', boxShadow: '0 -5px 15px rgba(0,0,0,0.02)' }}>
-        <button onClick={() => setActiveTab('map')} style={{ border: 'none', background: 'none', display:'flex', flexDirection:'column', alignItems:'center', gap:'5px', color: activeTab === 'map' ? '#10b981' : '#cbd5e1' }}>
-          <MapPin size={26} fill={activeTab === 'map' ? 'currentColor' : 'none'} strokeWidth={3}/><span style={{ fontSize: '11px', fontWeight: '900' }}>지도</span>
+      <nav className="h-[90px] bg-white border-t border-[#d1fae5] flex justify-around items-center px-4 pb-8 shadow-[0_-5px_20px_rgba(0,0,0,0.02)] shrink-0">
+        <button onClick={() => setActiveTab('map')} className={`flex flex-col items-center gap-1.5 transition-all ${activeTab === 'map' ? 'text-[#10b981] scale-110' : 'text-slate-300'}`}>
+          <MapPin size={26} fill={activeTab === 'map' ? 'currentColor' : 'none'} strokeWidth={3}/><span className="text-[11px] font-black">지도</span>
         </button>
-        <button onClick={() => setActiveTab('list')} style={{ border: 'none', background: 'none', display:'flex', flexDirection:'column', alignItems:'center', gap:'5px', color: activeTab === 'list' ? '#10b981' : '#cbd5e1' }}>
-          <List size={26} strokeWidth={3}/><span style={{ fontSize: '11px', fontWeight: '900' }}>피드</span>
+        <button onClick={() => setActiveTab('list')} className={`flex flex-col items-center gap-1.5 transition-all ${activeTab === 'list' ? 'text-[#10b981] scale-110' : 'text-slate-300'}`}>
+          <List size={26} strokeWidth={3}/><span className="text-[11px] font-black">피드</span>
         </button>
-        <button onClick={() => setActiveTab('stats')} style={{ border: 'none', background: 'none', display:'flex', flexDirection:'column', alignItems:'center', gap:'5px', color: activeTab === 'stats' ? '#10b981' : '#cbd5e1' }}>
-          <BarChart3 size={26} strokeWidth={3}/><span style={{ fontSize: '11px', fontWeight: '900' }}>통계</span>
+        <button onClick={() => setActiveTab('stats')} className={`flex flex-col items-center gap-1.5 transition-all ${activeTab === 'stats' ? 'text-[#10b981] scale-110' : 'text-slate-300'}`}>
+          <BarChart3 size={26} strokeWidth={3}/><span className="text-[11px] font-black">통계</span>
         </button>
       </nav>
-      <style>{` .leaflet-container { background: #f0fdf4 !important; z-index: 1 !important; } .custom-pin { background: none !important; border: none !important; } ::-webkit-scrollbar { width: 0px; } `}</style>
+      
+      <style>{`
+        .leaflet-container { background: #f0fdf4 !important; z-index: 1 !important; border-radius: 0; }
+        .custom-pin { background: none !important; border: none !important; }
+        ::-webkit-scrollbar { width: 0px; }
+      `}</style>
     </div>
   );
-}
-
-// ---------------------------------------------------------
-// [핵심] 실제 화면에 앱을 그리는 렌더링 엔진 (데이지 구조)
-// ---------------------------------------------------------
-const container = document.getElementById('root');
-if (container) {
-  const root = ReactDOM.createRoot(container);
-  root.render(<App />);
 }
