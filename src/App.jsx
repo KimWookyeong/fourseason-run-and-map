@@ -36,11 +36,11 @@ import {
 } from 'lucide-react';
 
 /**
- * [사계절 런앤맵 - 최종 긴급 복구 버전]
- * 1. 스타일 완전 보장: Tailwind가 작동하지 않는 환경에서도 깨지지 않도록 인라인 스타일을 적용했습니다.
- * 2. 닉네임창: "예시: 금정_이름"이 충분히 보이도록 입력창 너비를 확장했습니다.
- * 3. 저장 실패 해결: 모든 DB 작업 전 실시간 강제 인증 로직(ensureAuth)을 적용했습니다.
- * 4. 지도 로딩: 입장 즉시 지도가 꽉 차게 보이도록 렌더링 타이밍을 최적화했습니다.
+ * [사계절 런앤맵 - 긴급 전체 복구 및 기능 안정화 최종본]
+ * 1. 스타일 완전 보장: Tailwind 미작동 시에도 깨지지 않도록 강력한 인라인 스타일 적용
+ * 2. 닉네임창: "예시: 금정_이름" 가이드가 시원하게 보이는 넓은 UI
+ * 3. 지도 로딩: 입장 및 탭 전환 시 즉시 지도 렌더링 보장 (invalidateSize 강화)
+ * 4. 데이터 오류 해결: 모든 작업 전 실시간 강제 인증 로직 (Rule 3 준수)
  */
 
 const firebaseConfig = {
@@ -53,8 +53,8 @@ const firebaseConfig = {
   databaseURL: "https://fourseason-run-and-map-default-rtdb.firebaseio.com/" 
 };
 
-// 고유 앱 아이디 (데이터 꼬임 방지를 위해 v40으로 갱신)
-const appId = 'fourseason-run-and-map-v40-stable'; 
+// 고유 앱 아이디 (안정적인 데이터 통신을 위해 v50으로 업데이트)
+const appId = 'fourseason-run-and-map-v50-final'; 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
@@ -89,7 +89,7 @@ export default function App() {
 
   const isAdmin = nickname.toLowerCase() === 'admin';
 
-  // [핵심] 인증 보장 함수: 모든 데이터베이스 명령 전 필수 실행
+  // [핵심] 인증 보장 함수: 모든 데이터베이스 명령 전 필수 실행 (Rule 3)
   const ensureAuth = async () => {
     if (auth.currentUser) return auth.currentUser;
     try {
@@ -101,14 +101,14 @@ export default function App() {
     }
   };
 
-  // 1. 초기 인증 처리
+  // 1. 초기 인증 및 상태 유지
   useEffect(() => {
     ensureAuth().catch(console.error);
     const unsubscribe = onAuthStateChanged(auth, setUser);
     return () => unsubscribe();
   }, []);
 
-  // 2. 실시간 데이터 수신
+  // 2. 실시간 데이터 수신 (Rule 1 & 3)
   useEffect(() => {
     if (!user) return;
     const coll = collection(db, 'artifacts', appId, 'public', 'data', 'reports');
@@ -117,7 +117,7 @@ export default function App() {
         .sort((a, b) => new Date(b.discoveredTime) - new Date(a.discoveredTime));
       setReports(data);
       updateMarkers(data);
-    });
+    }, (err) => console.error("Firestore 수신 에러:", err));
     return () => unsubscribe();
   }, [user]);
 
@@ -132,7 +132,7 @@ export default function App() {
     document.head.appendChild(script);
   }, []);
 
-  // 4. 지도 초기화 및 크기 보정
+  // 4. 지도 초기화 및 크기 보정 (데이지 앱의 안정성 이식)
   useEffect(() => {
     if (isScriptLoaded && nickname && activeTab === 'map' && mapContainerRef.current) {
       if (!leafletMap.current) {
@@ -188,12 +188,12 @@ export default function App() {
       await ensureAuth();
       await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'reports', reportId));
       alert("삭제되었습니다.");
-    } catch (err) { alert("삭제 실패"); }
+    } catch (err) { alert("삭제 실패: 권한이 없습니다."); }
   };
 
   const clearAllData = async () => {
     if (!isAdmin) return;
-    if (window.confirm("🚨 관리자 경고: 모든 데이터를 초기화하시겠습니까?")) {
+    if (window.confirm("🚨 관리자 경고: 모든 활동 기록을 영구 삭제하시겠습니까?")) {
       try {
         await ensureAuth();
         const coll = collection(db, 'artifacts', appId, 'public', 'data', 'reports');
@@ -201,7 +201,7 @@ export default function App() {
         const batch = writeBatch(db);
         snap.docs.forEach((d) => batch.delete(d.ref));
         await batch.commit();
-        alert("모든 기록이 초기화되었습니다.");
+        alert("모든 기록이 깨끗하게 초기화되었습니다.");
       } catch (err) { alert("초기화 실패"); }
     }
   };
@@ -271,7 +271,7 @@ export default function App() {
       <main style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
         {/* Tab 1: 지도 */}
         <div style={{ position: 'absolute', inset: 0, display: activeTab === 'map' ? 'block' : 'none', zIndex: 10 }}>
-          <div ref={mapContainerRef} style={{ width: '100%', height: '100%' }} />
+          <div ref={mapContainerRef} style={{ width: '100%', height: '100%', minHeight: '100%' }} />
           <button onClick={() => setActiveTab('add')} style={{ position: 'absolute', bottom: '32px', left: '50%', transform: 'translateX(-50%)', backgroundColor: '#1e293b', color: 'white', border: 'none', fontWeight: '900', borderRadius: '50px', padding: '18px 40px', fontSize: '1.125rem', zIndex: 1001, boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.2)', cursor: 'pointer' }}>기록하기 +</button>
         </div>
 
@@ -288,7 +288,7 @@ export default function App() {
                    <span style={{ fontSize: '0.75rem', fontWeight: '900' }}>{isLocating ? "수신 중..." : formData.customLocation ? "위치 완료" : "내 위치 찾기"}</span>
                 </button>
                 <div style={{ height: '110px', borderRadius: '32px', backgroundColor: 'white', border: '2px dashed #d1fae5', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '8px', color: '#cbd5e1' }}>
-                   <Camera size={28}/><span style={{ fontSize: '0.75rem', fontWeight: '900' }}>사진 준비중</span>
+                   <Camera size={28}/><span style={{ fontSize: '0.75rem', fontWeight: '900' }}>사진 서비스 준비중</span>
                 </div>
              </div>
              <select value={formData.area} onChange={e => setFormData({...formData, area: e.target.value})} style={{ padding: '18px', borderRadius: '20px', border: '2px solid #e2e8f0', fontWeight: 'bold', fontSize: '1rem', outline: 'none', backgroundColor: 'white' }}>
@@ -366,7 +366,7 @@ export default function App() {
       
       <style>{`
         @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-        .leaflet-container { background: #f0fdf4 !important; z-index: 1 !important; border: none !important; }
+        .leaflet-container { background: #f0fdf4 !important; z-index: 1 !important; border: none !important; width: 100% !important; height: 100% !important; }
         .custom-pin { background: none !important; border: none !important; }
         ::-webkit-scrollbar { width: 0px; }
       `}</style>
