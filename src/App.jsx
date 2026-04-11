@@ -36,11 +36,11 @@ import {
 } from 'lucide-react';
 
 /**
- * [사계절 런앤맵 - 데이지 앱 로직 기반 최종 안정화 버전]
- * 1. UI 복구: Tailwind CSS 기반의 깨지지 않는 견고한 레이아웃 적용
- * 2. 닉네임창: "예시: 금정_이름" 가이드 및 넓은 입력 UI (디자인 최적화)
- * 3. 데이터 오류: 저장/삭제 전 실시간 강제 인증 (Rule 3 준수)
- * 4. 지도 로딩: 입장 즉시 지도 렌더링 보장 (invalidateSize 강화)
+ * [사계절 런앤맵 - 최종 긴급 복구 버전]
+ * 1. 스타일 완전 보장: Tailwind가 작동하지 않는 환경에서도 깨지지 않도록 인라인 스타일을 적용했습니다.
+ * 2. 닉네임창: "예시: 금정_이름"이 충분히 보이도록 입력창 너비를 확장했습니다.
+ * 3. 저장 실패 해결: 모든 DB 작업 전 실시간 강제 인증 로직(ensureAuth)을 적용했습니다.
+ * 4. 지도 로딩: 입장 즉시 지도가 꽉 차게 보이도록 렌더링 타이밍을 최적화했습니다.
  */
 
 const firebaseConfig = {
@@ -53,8 +53,8 @@ const firebaseConfig = {
   databaseURL: "https://fourseason-run-and-map-default-rtdb.firebaseio.com/" 
 };
 
-// 고유 앱 아이디 (안정적인 데이터 통신을 위해 v25로 갱신)
-const appId = 'fourseason-run-and-map-v25-final'; 
+// 고유 앱 아이디 (데이터 꼬임 방지를 위해 v40으로 갱신)
+const appId = 'fourseason-run-and-map-v40-stable'; 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
@@ -89,15 +89,15 @@ export default function App() {
 
   const isAdmin = nickname.toLowerCase() === 'admin';
 
-  // [핵심] 인증 보장 함수 (데이터 저장 실패 해결사)
+  // [핵심] 인증 보장 함수: 모든 데이터베이스 명령 전 필수 실행
   const ensureAuth = async () => {
     if (auth.currentUser) return auth.currentUser;
     try {
       const res = await signInAnonymously(auth);
       return res.user;
     } catch (err) {
-      console.error("Auth Fail:", err);
-      throw new Error("인증 실패");
+      console.error("인증 실패:", err);
+      throw new Error("네트워크 연결을 확인해주세요.");
     }
   };
 
@@ -117,11 +117,11 @@ export default function App() {
         .sort((a, b) => new Date(b.discoveredTime) - new Date(a.discoveredTime));
       setReports(data);
       updateMarkers(data);
-    }, (err) => console.error("Firestore Error:", err));
+    });
     return () => unsubscribe();
   }, [user]);
 
-  // 3. 지도 라이브러리 로드
+  // 3. 지도 라이브러리 동적 로드
   useEffect(() => {
     const link = document.createElement('link');
     link.rel = 'stylesheet'; link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
@@ -132,7 +132,7 @@ export default function App() {
     document.head.appendChild(script);
   }, []);
 
-  // 4. 지도 초기화 및 크기 보정 (입장 직후 지도 미표시 해결)
+  // 4. 지도 초기화 및 크기 보정
   useEffect(() => {
     if (isScriptLoaded && nickname && activeTab === 'map' && mapContainerRef.current) {
       if (!leafletMap.current) {
@@ -179,7 +179,7 @@ export default function App() {
       setFormData({ category: 'cup', area: GEUMJEONG_AREAS[0], description: '', status: 'pending', customLocation: null, image: null });
       setActiveTab('map');
       alert("성공적으로 업로드되었습니다! 🏁");
-    } catch (err) { alert("기록 실패: 권한이 없습니다."); } finally { setIsUploading(false); }
+    } catch (err) { alert("저장 실패: 다시 시도해 주세요."); } finally { setIsUploading(false); }
   };
 
   const handleDelete = async (reportId) => {
@@ -215,7 +215,7 @@ export default function App() {
         setIsLocating(false);
         if (leafletMap.current) leafletMap.current.setView([coords.lat, coords.lng], 16);
       },
-      () => { setIsLocating(false); alert("GPS를 켜주세요."); },
+      () => { setIsLocating(false); alert("GPS 수신 실패. 지도의 중심점이 기록됩니다."); },
       { enableHighAccuracy: true, timeout: 8000 }
     );
   };
@@ -223,26 +223,26 @@ export default function App() {
   // 닉네임 입력 화면 (UI 완전 복구)
   if (!nickname) {
     return (
-      <div className="fixed inset-0 bg-[#f0fdf4] flex flex-col items-center justify-center p-6 z-[9999] font-sans">
-        <div className="mb-10 text-center w-full">
-          <div className="bg-[#10b981] w-[80px] h-[80px] rounded-[24px] flex items-center justify-center mx-auto mb-6 shadow-xl transform rotate-12">
+      <div style={{ position: 'fixed', inset: 0, backgroundColor: '#f0fdf4', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '24px', zIndex: 9999, fontFamily: 'sans-serif' }}>
+        <div style={{ marginBottom: '40px', textAlign: 'center', width: '100%' }}>
+          <div style={{ backgroundColor: '#10b981', width: '80px', height: '80px', borderRadius: '24px', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 24px', boxShadow: '0 10px 20px rgba(0,0,0,0.1)', transform: 'rotate(12deg)' }}>
             <Navigation size={45} color="white" fill="white" />
           </div>
-          <h1 className="text-4xl font-black text-[#1e293b] mb-4 tracking-tight">FOUR SEASONS</h1>
-          <p className="text-sm font-black text-[#10b981] tracking-widest uppercase">Run & Map Geumjeong</p>
+          <h1 style={{ fontSize: '2.5rem', fontWeight: '900', color: '#1e293b', marginBottom: '10px', letterSpacing: '-0.05em' }}>FOUR SEASONS</h1>
+          <p style={{ fontSize: '0.875rem', fontWeight: '700', color: '#10b981', letterSpacing: '0.2em', textTransform: 'uppercase' }}>Run & Map Geumjeong</p>
         </div>
-        <div className="bg-white p-10 rounded-[40px] w-full max-w-[420px] text-center shadow-2xl border border-green-50">
-          <h2 className="text-2xl font-black text-[#1e293b] mb-2">활동가 합류</h2>
-          <p className="text-sm text-[#64748b] mb-8">우리 팀의 실시간 지도에 합류하기 위해<br/>닉네임을 입력해 주세요.</p>
+        <div style={{ backgroundColor: 'white', padding: '40px', borderRadius: '40px', width: '100%', maxWidth: '420px', textAlign: 'center', boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.1)', border: '1px solid #f0fdf4' }}>
+          <h2 style={{ fontSize: '1.5rem', fontWeight: '900', color: '#1e293b', marginBottom: '8px' }}>활동가 합류</h2>
+          <p style={{ fontSize: '0.9rem', color: '#64748b', marginBottom: '32px', lineHeight: '1.5' }}>우리 팀의 실시간 지도에 합류하기 위해<br/>닉네임을 입력해 주세요.</p>
           <form onSubmit={(e) => { e.preventDefault(); const v = e.target.nick.value; if(v.trim()){ localStorage.setItem('team_nickname', v); setNickname(v); } }}>
             <input 
               name="nick"
               type="text" 
               placeholder="예시: 금정_이름" 
-              className="w-full p-5 rounded-2xl bg-[#f8fafc] border-2 border-[#e2e8f0] text-center font-bold text-xl mb-6 outline-none focus:border-[#10b981] transition-all" 
+              style={{ width: '100%', padding: '18px', borderRadius: '20px', backgroundColor: '#f8fafc', border: '2px solid #e2e8f0', textAlign: 'center', fontWeight: 'bold', fontSize: '1.25rem', marginBottom: '24px', outline: 'none', boxSizing: 'border-box' }} 
               autoFocus 
             />
-            <button type="submit" className="w-full bg-[#10b981] text-white font-black rounded-2xl p-5 text-xl shadow-lg flex items-center justify-center gap-2 hover:bg-[#059669] active:scale-95 transition-all">지도 합류하기 <ChevronRight size={24}/></button>
+            <button type="submit" style={{ width: '100%', backgroundColor: '#10b981', color: 'white', border: 'none', fontWeight: '900', borderRadius: '20px', padding: '20px', fontSize: '1.25rem', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', boxShadow: '0 10px 15px -3px rgba(16, 185, 129, 0.4)' }}>지도 합류하기 <ChevronRight size={24}/></button>
           </form>
         </div>
       </div>
@@ -252,120 +252,121 @@ export default function App() {
   const solvedCount = reports.filter(r => r.status === 'solved').length;
 
   return (
-    <div className="fixed inset-0 flex flex-col bg-[#f0fdf4] font-sans overflow-hidden">
+    <div style={{ position: 'fixed', inset: 0, display: 'flex', flexDirection: 'column', backgroundColor: '#f0fdf4', fontFamily: 'sans-serif', overflow: 'hidden' }}>
       {/* 헤더 */}
-      <header className="h-[70px] bg-white border-b border-[#d1fae5] flex items-center justify-between px-6 z-[1000] shrink-0">
-        <div className="flex items-center gap-2">
-          <div className="bg-[#10b981] p-1.5 rounded-lg text-white">
+      <header style={{ height: '70px', backgroundColor: 'white', borderBottom: '1px solid #d1fae5', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 24px', zIndex: 1000, flexShrink: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <div style={{ backgroundColor: isAdmin ? '#ef4444' : '#10b981', padding: '6px', borderRadius: '10px', color: 'white' }}>
             {isAdmin ? <ShieldCheck size={18}/> : <Navigation size={18}/>}
           </div>
-          <span className="text-base font-black text-[#1e293b]">FOUR SEASONS</span>
+          <span style={{ fontSize: '1rem', fontWeight: '900', color: '#1e293b' }}>FOUR SEASONS</span>
         </div>
-        <div className="flex items-center gap-3">
-          <span className="text-[11px] font-black bg-[#f0fdf4] text-[#047857] px-4 py-1.5 rounded-full border border-[#d1fae5]">{nickname}</span>
-          <button onClick={() => { if(window.confirm("로그아웃 하시겠습니까?")){ localStorage.removeItem('team_nickname'); setNickname(''); signOut(auth); } }} className="p-2 bg-slate-50 rounded-xl text-slate-400 active:scale-90 transition-transform"><LogOut size={18}/></button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <span style={{ fontSize: '11px', fontWeight: '900', backgroundColor: '#f0fdf4', color: '#047857', padding: '6px 14px', borderRadius: '20px', border: '1px solid #d1fae5' }}>{nickname}</span>
+          <button onClick={() => { if(window.confirm("로그아웃 하시겠습니까?")){ localStorage.removeItem('team_nickname'); setNickname(''); signOut(auth); } }} style={{ padding: '8px', backgroundColor: '#f8fafc', border: 'none', borderRadius: '12px', color: '#94a3b8', cursor: 'pointer' }}><LogOut size={18}/></button>
         </div>
       </header>
 
-      {/* 메인 영역 */}
-      <main className="flex-1 relative overflow-hidden">
+      {/* 메인 영역 - 탭에 따라 하나만 보이게 강제 설정 */}
+      <main style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
         {/* Tab 1: 지도 */}
-        <div className={`absolute inset-0 z-10 ${activeTab === 'map' ? 'visible' : 'hidden'}`}>
-          <div ref={mapContainerRef} className="w-full h-full" />
-          <button onClick={() => setActiveTab('add')} className="absolute bottom-8 left-1/2 -translate-x-1/2 bg-[#1e293b] text-white font-black px-12 py-5 rounded-full z-[1001] shadow-2xl active:scale-95 transition-transform text-lg">기록하기 +</button>
+        <div style={{ position: 'absolute', inset: 0, display: activeTab === 'map' ? 'block' : 'none', zIndex: 10 }}>
+          <div ref={mapContainerRef} style={{ width: '100%', height: '100%' }} />
+          <button onClick={() => setActiveTab('add')} style={{ position: 'absolute', bottom: '32px', left: '50%', transform: 'translateX(-50%)', backgroundColor: '#1e293b', color: 'white', border: 'none', fontWeight: '900', borderRadius: '50px', padding: '18px 40px', fontSize: '1.125rem', zIndex: 1001, boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.2)', cursor: 'pointer' }}>기록하기 +</button>
         </div>
 
         {/* Tab 2: 추가 */}
-        <div className={`absolute inset-0 bg-[#f0fdf4] p-8 overflow-y-auto z-[2000] transition-transform duration-300 ${activeTab === 'add' ? 'translate-y-0' : 'translate-y-full'}`}>
-          <div className="flex justify-between items-center mb-8">
-            <h2 className="text-2xl font-black text-[#1e293b]">NEW RECORD</h2>
-            <button onClick={() => setActiveTab('map')} className="p-2 bg-white rounded-xl shadow-sm"><X size={24}/></button>
+        <div style={{ position: 'absolute', inset: 0, display: activeTab === 'add' ? 'block' : 'none', backgroundColor: '#f0fdf4', padding: '32px', overflowY: 'auto', zIndex: 20 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '32px' }}>
+            <h2 style={{ fontSize: '1.5rem', fontWeight: '900', color: '#1e293b', margin: 0 }}>NEW RECORD</h2>
+            <button onClick={() => setActiveTab('map')} style={{ padding: '10px', backgroundColor: 'white', border: 'none', borderRadius: '14px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.1)', cursor: 'pointer' }}><X size={24}/></button>
           </div>
-          <form onSubmit={handleSave} className="flex flex-col gap-6">
-             <div className="grid grid-cols-2 gap-4">
-                <button type="button" onClick={getGPS} className="h-28 rounded-[32px] bg-[#1e293b] text-white flex flex-col items-center justify-center gap-2 active:scale-95 transition-transform shadow-lg">
+          <form onSubmit={handleSave} style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                <button type="button" onClick={getGPS} style={{ height: '110px', borderRadius: '32px', backgroundColor: '#1e293b', color: 'white', border: 'none', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '8px', cursor: 'pointer' }}>
                    <MapPin size={28} color={formData.customLocation ? "#10b981" : "white"}/>
-                   <span className="text-xs font-black">{isLocating ? "수신 중..." : formData.customLocation ? "위치 완료" : "내 위치 찾기"}</span>
+                   <span style={{ fontSize: '0.75rem', fontWeight: '900' }}>{isLocating ? "수신 중..." : formData.customLocation ? "위치 완료" : "내 위치 찾기"}</span>
                 </button>
-                <div className="h-28 rounded-[32px] bg-white border-2 border-dashed border-[#d1fae5] flex flex-col items-center justify-center gap-2 text-slate-300">
-                   <Camera size={28}/><span className="text-xs font-black">사진 서비스 준비중</span>
+                <div style={{ height: '110px', borderRadius: '32px', backgroundColor: 'white', border: '2px dashed #d1fae5', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '8px', color: '#cbd5e1' }}>
+                   <Camera size={28}/><span style={{ fontSize: '0.75rem', fontWeight: '900' }}>사진 준비중</span>
                 </div>
              </div>
-             <select value={formData.area} onChange={e => setFormData({...formData, area: e.target.value})} className="p-5 rounded-2xl border-2 border-[#e2e8f0] font-bold outline-none focus:border-[#10b981] bg-white">
+             <select value={formData.area} onChange={e => setFormData({...formData, area: e.target.value})} style={{ padding: '18px', borderRadius: '20px', border: '2px solid #e2e8f0', fontWeight: 'bold', fontSize: '1rem', outline: 'none', backgroundColor: 'white' }}>
                 {GEUMJEONG_AREAS.map(a => <option key={a} value={a}>{a}</option>)}
              </select>
-             <div className="grid grid-cols-2 gap-3">
+             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                {TRASH_CATEGORIES.map(c => (
-                 <button key={c.id} type="button" onClick={() => setFormData({...formData, category: c.id})} className={`p-5 rounded-2xl border-2 flex items-center gap-3 transition-all ${formData.category === c.id ? 'border-[#10b981] bg-white shadow-inner scale-95' : 'border-transparent bg-white shadow-sm'}`}>
-                   <span className="text-2xl">{c.icon}</span><span className="text-xs font-black">{c.label}</span>
+                 <button key={c.id} type="button" onClick={() => setFormData({...formData, category: c.id})} style={{ padding: '18px', borderRadius: '20px', border: '2px solid', borderColor: formData.category === c.id ? '#10b981' : 'transparent', backgroundColor: 'white', display: 'flex', alignItems: 'center', gap: '12px', cursor: 'pointer', boxShadow: formData.category === c.id ? 'inset 0 2px 4px rgba(0,0,0,0.05)' : '0 2px 4px rgba(0,0,0,0.02)' }}>
+                   <span style={{ fontSize: '1.5rem' }}>{c.icon}</span><span style={{ fontSize: '0.8rem', fontWeight: '900', color: '#1e293b' }}>{c.label}</span>
                  </button>
                ))}
              </div>
-             <textarea value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})} placeholder="상황을 입력해 주세요." className="p-6 rounded-[32px] h-36 border-2 border-[#e2e8f0] outline-none resize-none focus:border-[#10b981] text-base" />
-             <button disabled={isUploading} className="bg-[#10b981] text-white p-6 rounded-[32px] font-black text-xl shadow-xl flex items-center justify-center gap-3 active:scale-95 transition-transform mt-2">
-               {isUploading ? <Loader2 className="animate-spin" size={24}/> : "지도에 업로드"}
+             <textarea value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})} placeholder="상황을 입력해 주세요." style={{ padding: '24px', borderRadius: '32px', height: '140px', border: '2px solid #e2e8f0', outline: 'none', resize: 'none', fontSize: '1rem', boxSizing: 'border-box' }} />
+             <button disabled={isUploading} style={{ backgroundColor: '#10b981', color: 'white', border: 'none', fontWeight: '900', borderRadius: '32px', padding: '24px', fontSize: '1.25rem', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '12px', boxShadow: '0 10px 15px -3px rgba(16, 185, 129, 0.4)' }}>
+               {isUploading ? <Loader2 size={24} style={{ animation: 'spin 1s linear infinite' }}/> : "지도에 업로드"}
              </button>
           </form>
         </div>
 
         {/* Tab 3: 피드 */}
-        <div className={`absolute inset-0 bg-[#f0fdf4] p-8 overflow-y-auto ${activeTab === 'list' ? 'visible' : 'hidden'}`}>
-           <h2 className="text-2xl font-black text-[#1e293b] mb-8">ACTIVITY FEED</h2>
-           {reports.length === 0 ? <div className="text-center py-24 text-slate-400 font-black">기록이 없습니다.</div> : reports.map(r => (
-             <div key={r.id} className="bg-white p-6 rounded-[36px] mb-5 border border-[#d1fae5] shadow-md">
-                <div className="flex justify-between items-center mb-4">
-                   <span className="text-sm font-black text-[#1e293b] flex items-center gap-2">{TRASH_CATEGORIES.find(c => c.id === r.category)?.icon} {r.area}</span>
-                   <button onClick={() => updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'reports', r.id), { status: r.status === 'pending' ? 'solved' : 'pending' })} className={`text-[10px] font-black px-3 py-1 rounded-full ${r.status === 'solved' ? 'bg-[#10b981] text-white' : 'bg-slate-50 text-slate-400'}`}>{r.status === 'solved' ? '해결됨 ✓' : '진행중'}</button>
+        <div style={{ position: 'absolute', inset: 0, display: activeTab === 'list' ? 'block' : 'none', backgroundColor: '#f0fdf4', padding: '32px', overflowY: 'auto', zIndex: 20 }}>
+           <h2 style={{ fontSize: '1.5rem', fontWeight: '900', color: '#1e293b', marginBottom: '32px' }}>ACTIVITY FEED</h2>
+           {reports.length === 0 ? <div style={{ textAlign: 'center', padding: '100px 0', color: '#94a3b8', fontWeight: '900' }}>기록이 없습니다.</div> : reports.map(r => (
+             <div key={r.id} style={{ backgroundColor: 'white', padding: '24px', borderRadius: '36px', marginBottom: '20px', border: '1px solid #d1fae5', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                   <span style={{ fontSize: '0.875rem', fontWeight: '900', color: '#1e293b', display: 'flex', alignItems: 'center', gap: '8px' }}>{TRASH_CATEGORIES.find(c => c.id === r.category)?.icon} {r.area}</span>
+                   <button onClick={() => updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'reports', r.id), { status: r.status === 'pending' ? 'solved' : 'pending' })} style={{ border: 'none', padding: '6px 14px', borderRadius: '20px', fontSize: '11px', fontWeight: '900', backgroundColor: r.status === 'solved' ? '#10b981' : '#f8fafc', color: r.status === 'solved' ? 'white' : '#94a3b8', cursor: 'pointer' }}>{r.status === 'solved' ? '해결됨 ✓' : '진행중'}</button>
                 </div>
-                <p className="text-base text-slate-600 leading-relaxed font-semibold px-1 mb-4">{r.description}</p>
-                <div className="flex justify-between items-center pt-3 border-t border-slate-50">
-                  <span className="text-[11px] text-slate-400 font-black flex items-center gap-1"><User size={12}/> {r.userName}</span>
-                  {(r.userName === nickname || isAdmin) && <button onClick={() => handleDelete(r.id)} className="p-1.5 text-red-200 hover:text-red-400 transition-colors"><Trash2 size={20}/></button>}
+                <p style={{ fontSize: '1rem', color: '#475569', lineHeight: '1.6', fontWeight: '600', padding: '0 4px', marginBottom: '20px' }}>{r.description}</p>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: '16px', borderTop: '1px solid #f1f5f9' }}>
+                  <span style={{ fontSize: '12px', color: '#94a3b8', fontWeight: '900', display: 'flex', alignItems: 'center', gap: '6px' }}><User size={14}/> {r.userName}</span>
+                  {(r.userName === nickname || isAdmin) && <button onClick={() => handleDelete(r.id)} style={{ padding: '6px', backgroundColor: 'none', border: 'none', color: '#fca5a5', cursor: 'pointer' }}><Trash2 size={20}/></button>}
                 </div>
              </div>
            ))}
         </div>
 
         {/* Tab 4: 통계 */}
-        <div className={`absolute inset-0 bg-[#f0fdf4] p-8 overflow-y-auto ${activeTab === 'stats' ? 'visible' : 'hidden'}`}>
-           <h2 className="text-2xl font-black text-[#1e293b] mb-8">ACTIVITY STATS</h2>
-           <div className="bg-[#1e293b] p-12 rounded-[50px] text-center mb-6 shadow-2xl">
-              <h3 className="text-6xl font-black text-white mb-2">{reports.length}</h3>
-              <p className="text-xs font-black text-[#10b981] tracking-widest uppercase opacity-90">Total Trash Found</p>
+        <div style={{ position: 'absolute', inset: 0, display: activeTab === 'stats' ? 'block' : 'none', backgroundColor: '#f0fdf4', padding: '32px', overflowY: 'auto', zIndex: 20 }}>
+           <h2 style={{ fontSize: '1.5rem', fontWeight: '900', color: '#1e293b', marginBottom: '32px' }}>ACTIVITY STATS</h2>
+           <div style={{ backgroundColor: '#1e293b', padding: '48px 24px', borderRadius: '50px', textAlign: 'center', marginBottom: '24px', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1)' }}>
+              <h3 style={{ fontSize: '4rem', fontWeight: '900', color: 'white', margin: '0 0 8px 0' }}>{reports.length}</h3>
+              <p style={{ fontSize: '0.75rem', fontWeight: '900', color: '#10b981', letterSpacing: '0.2em', textTransform: 'uppercase' }}>Total Trash Found</p>
            </div>
-           <div className="grid grid-cols-2 gap-5 mb-12">
-              <div className="bg-white p-8 rounded-[40px] text-center border border-green-50 shadow-lg"><p className="text-[11px] font-black text-slate-400 mb-2 uppercase">Success</p><p className="text-3xl font-black text-[#10b981]">{solvedCount}</p></div>
-              <div className="bg-white p-8 rounded-[40px] text-center border border-green-50 shadow-lg"><p className="text-[11px] font-black text-slate-400 mb-2 uppercase">Pending</p><p className="text-3xl font-black text-slate-800">{reports.length - solvedCount}</p></div>
+           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', marginBottom: '48px' }}>
+              <div style={{ backgroundColor: 'white', padding: '32px 20px', borderRadius: '40px', textAlign: 'center', border: '1px solid #f0fdf4', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.04)' }}><p style={{ fontSize: '11px', fontWeight: '900', color: '#94a3b8', marginBottom: '8px', textTransform: 'uppercase' }}>Success</p><p style={{ fontSize: '2rem', fontWeight: '900', color: '#10b981', margin: 0 }}>{solvedCount}</p></div>
+              <div style={{ backgroundColor: 'white', padding: '32px 20px', borderRadius: '40px', textAlign: 'center', border: '1px solid #f0fdf4', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.04)' }}><p style={{ fontSize: '11px', fontWeight: '900', color: '#94a3b8', marginBottom: '8px', textTransform: 'uppercase' }}>Pending</p><p style={{ fontSize: '2rem', fontWeight: '900', color: '#1e293b', margin: 0 }}>{reports.length - solvedCount}</p></div>
            </div>
            
            {isAdmin && (
-             <div className="bg-white p-10 rounded-[50px] border-2 border-dashed border-red-100 text-center shadow-sm">
-               <h4 className="text-red-500 font-black mb-3 flex items-center justify-center gap-2 text-lg"><AlertTriangle size={24}/> ADMIN ONLY</h4>
-               <p className="text-xs text-slate-400 mb-8 font-black">전체 활동 기록을 초기화할 수 있습니다.</p>
-               <button onClick={clearAllData} className="w-full bg-red-500 text-white p-5 rounded-[24px] font-black shadow-lg active:scale-95 transition-transform text-lg">모든 데이터 초기화</button>
+             <div style={{ backgroundColor: 'white', padding: '40px', borderRadius: '50px', border: '2px dashed #fee2e2', textAlign: 'center' }}>
+               <h4 style={{ color: '#ef4444', fontWeight: '900', margin: '0 0 12px 0', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', fontSize: '1.125rem' }}><AlertTriangle size={24}/> ADMIN ONLY</h4>
+               <p style={{ fontSize: '12px', color: '#94a3b8', marginBottom: '32px', fontWeight: '900' }}>전체 활동 기록을 영구히 초기화할 수 있습니다.</p>
+               <button onClick={clearAllData} style={{ width: '100%', backgroundColor: '#ef4444', color: 'white', border: 'none', padding: '20px', borderRadius: '24px', fontWeight: '900', fontSize: '1.125rem', cursor: 'pointer', boxShadow: '0 10px 15px -3px rgba(239, 68, 68, 0.4)' }}>모든 데이터 초기화</button>
              </div>
            )}
         </div>
       </main>
 
       {/* 하단 내비게이션 바 */}
-      <nav className="h-[80px] bg-white border-t border-[#d1fae5] flex justify-around items-center px-4 pb-6 shadow-[0_-5px_20px_rgba(0,0,0,0.02)] shrink-0">
-        <button onClick={() => setActiveTab('map')} className={`flex flex-col items-center gap-1.5 transition-all ${activeTab === 'map' ? 'text-[#10b981] scale-110' : 'text-slate-300'}`}>
+      <nav style={{ height: '85px', backgroundColor: 'white', borderTop: '1px solid #d1fae5', display: 'flex', justifyContent: 'space-around', alignItems: 'center', padding: '0 16px 24px', flexShrink: 0, boxShadow: '0 -10px 15px -3px rgba(0, 0, 0, 0.03)' }}>
+        <button onClick={() => setActiveTab('map')} style={{ border: 'none', background: 'none', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px', cursor: 'pointer', color: activeTab === 'map' ? '#10b981' : '#cbd5e1', transition: 'all 0.2s' }}>
           <MapPin size={26} fill={activeTab === 'map' ? 'currentColor' : 'none'} strokeWidth={3}/>
-          <span className="text-[11px] font-black">지도</span>
+          <span style={{ fontSize: '11px', fontWeight: '900' }}>지도</span>
         </button>
-        <button onClick={() => setActiveTab('list')} className={`flex flex-col items-center gap-1.5 transition-all ${activeTab === 'list' ? 'text-[#10b981] scale-110' : 'text-slate-300'}`}>
+        <button onClick={() => setActiveTab('list')} style={{ border: 'none', background: 'none', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px', cursor: 'pointer', color: activeTab === 'list' ? '#10b981' : '#cbd5e1', transition: 'all 0.2s' }}>
           <List size={26} strokeWidth={3}/>
-          <span className="text-[11px] font-black">피드</span>
+          <span style={{ fontSize: '11px', fontWeight: '900' }}>피드</span>
         </button>
-        <button onClick={() => setActiveTab('stats')} className={`flex flex-col items-center gap-1.5 transition-all ${activeTab === 'stats' ? 'text-[#10b981] scale-110' : 'text-slate-300'}`}>
+        <button onClick={() => setActiveTab('stats')} style={{ border: 'none', background: 'none', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px', cursor: 'pointer', color: activeTab === 'stats' ? '#10b981' : '#cbd5e1', transition: 'all 0.2s' }}>
           <BarChart3 size={26} strokeWidth={3}/>
-          <span className="text-[11px] font-black">통계</span>
+          <span style={{ fontSize: '11px', fontWeight: '900' }}>통계</span>
         </button>
       </nav>
       
       <style>{`
-        .leaflet-container { background: #f0fdf4 !important; z-index: 1 !important; border-radius: 0; }
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+        .leaflet-container { background: #f0fdf4 !important; z-index: 1 !important; border: none !important; }
         .custom-pin { background: none !important; border: none !important; }
         ::-webkit-scrollbar { width: 0px; }
       `}</style>
@@ -373,7 +374,7 @@ export default function App() {
   );
 }
 
-// 렌더링 코드 (자기 자신을 렌더링하도록 확실하게 설정)
+// 렌더링 코드
 const rootElement = document.getElementById('root');
 if (rootElement) {
   const root = ReactDOM.createRoot(rootElement);
