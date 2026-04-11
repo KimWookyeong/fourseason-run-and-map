@@ -35,18 +35,19 @@ import {
 } from 'lucide-react';
 
 /**
- * [사계절 런앤맵 - 데이지 앱 구조 기반 최종 통합 복구본]
- * 1. 실행 보장: ReactDOM 수동 호출 삭제 및 export default App 구조 적용 (접속 불가 해결)
- * 2. 디자인: 하트 잎사귀 네잎클로버 SVG + 산뜻한 연녹색 테마 (#f0fdf4)
- * 3. 데이터 철벽 보안: 모든 DB 작업 전 실시간 인증 강제 완료 (Rule 3 준수)
- * 4. 지도 로딩: 입장 즉시 지도 표시를 위한 이중 레이아웃 보조
+ * [사계절 런앤맵 - 클린 빌드 통합 안정화 버전]
+ * 1. 실행 보장: 시스템 자동 렌더링에 최적화된 export default App 구조
+ * 2. 디자인: 하트 잎사귀 네잎클로버 SVG 및 연녹색 사계절 테마 (#f0fdf4)
+ * 3. 데이터 오류: 모든 작업 전 실시간 인증 강제 완료 (Rule 3 준수)
+ * 4. 지도 로딩: 입장 즉시 지도 표시를 위한 자동 보정 엔진
  */
 
+// 시스템 환경 변수 활용
 const firebaseConfig = JSON.parse(__firebase_config);
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'fourseason-run-and-map';
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'fourseason-run-and-map-v700';
 
 const TRASH_CATEGORIES = [
   { id: 'cup', label: '일회용 컵', color: '#10b981', icon: '🥤' },
@@ -59,9 +60,9 @@ const TRASH_CATEGORIES = [
 const GEUMJEONG_AREAS = ["부산대/장전동", "온천천/부곡동", "구서/남산동", "금사/서동", "금정산/노포동"];
 const GEUMJEONG_CENTER = [35.243, 129.092];
 
-// 정교하게 디자인된 하트 잎 네잎클로버 SVG
+// [커스텀] 정교한 하트 잎 네잎클로버 SVG
 const PrettyClover = ({ size = 50, color = "#10b981" }) => (
-  <svg width={size} height={size} viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ filter: 'drop-shadow(0 4px 10px rgba(0,0,0,0.1))' }}>
+  <svg width={size} height={size} viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ filter: 'drop-shadow(0 4px 8px rgba(0,0,0,0.1))' }}>
     <g transform="translate(50, 50)">
       {[0, 90, 180, 270].map((angle) => (
         <path 
@@ -70,11 +71,11 @@ const PrettyClover = ({ size = 50, color = "#10b981" }) => (
           fill={color} 
           transform={`rotate(${angle})`}
           stroke="#064e3b"
-          strokeWidth="1.5"
+          strokeWidth="1.2"
         />
       ))}
     </g>
-    <circle cx="50" cy="50" r="6" fill="white" opacity="0.6" />
+    <circle cx="50" cy="50" r="6" fill="white" opacity="0.5" />
   </svg>
 );
 
@@ -99,7 +100,7 @@ export default function App() {
 
   const isAdmin = nickname.toLowerCase() === 'admin';
 
-  // 이미지 압축 로직
+  // 이미지 압축 (Firestore 1MB 제한 대비)
   const compressImage = (base64) => {
     return new Promise((resolve) => {
       const img = new Image();
@@ -133,7 +134,7 @@ export default function App() {
     reader.readAsDataURL(file);
   };
 
-  // 1. 초기 인증 엔진 (Rule 3 준수)
+  // 1. 초기 인증 엔진 (Rule 3)
   useEffect(() => {
     const initAuth = async () => {
       if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
@@ -148,7 +149,7 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
-  // 2. 실시간 데이터 수신 (Rule 1 & 3)
+  // 2. 실시간 데이터 스트리밍 (Rule 1 & 3)
   useEffect(() => {
     if (!user || !nickname) return;
     const coll = collection(db, 'artifacts', appId, 'public', 'data', 'reports');
@@ -161,7 +162,7 @@ export default function App() {
     return () => unsubscribe();
   }, [user, nickname]);
 
-  // 3. 지도 라이브러리 로드
+  // 3. 지도 라이브러리 동적 로드
   useEffect(() => {
     if (typeof window.L !== 'undefined') {
       setIsScriptLoaded(true);
@@ -218,7 +219,7 @@ export default function App() {
       localStorage.setItem('team_nickname', inputNickname);
       setNickname(inputNickname);
     } catch (err) {
-      alert("로그인 중 오류가 발생했습니다.");
+      alert("입장에 실패했습니다.");
     }
   };
 
@@ -301,15 +302,15 @@ export default function App() {
 
   if (!nickname) {
     return (
-      <div className="fixed inset-0 bg-[#f0fdf4] flex flex-col items-center justify-center p-6 z-[9999] font-sans">
-        <div className="mb-10 text-center">
+      <div className="fixed inset-0 bg-[#f0fdf4] flex flex-col items-center justify-center p-6 z-[9999] font-sans text-center">
+        <div className="mb-10 w-full">
           <div className="mx-auto mb-6 flex justify-center">
             <PrettyClover size={100} />
           </div>
           <h1 className="text-4xl font-black text-[#1e293b] mb-2 tracking-tight">FOUR SEASONS</h1>
           <p className="text-sm font-black text-[#10b981] tracking-widest uppercase">Run & Map Geumjeong</p>
         </div>
-        <div className="bg-white p-10 rounded-[45px] w-full max-w-[380px] text-center shadow-xl">
+        <div className="bg-white p-10 rounded-[45px] w-full max-w-[380px] shadow-xl">
           <h2 className="text-xl font-black text-[#1e293b] mb-2">활동가 합류</h2>
           <p className="text-sm text-[#64748b] mb-8">우리 팀의 실시간 지도에 합류하기 위해<br/>닉네임을 입력해 주세요.</p>
           <form onSubmit={handleJoin}>
@@ -388,12 +389,12 @@ export default function App() {
         <div className={`absolute inset-0 bg-[#f0fdf4] p-8 overflow-y-auto ${activeTab === 'list' ? 'visible' : 'hidden'}`}>
            <h2 className="text-2xl font-black text-[#1e293b] mb-8">ACTIVITY FEED</h2>
            {reports.length === 0 ? <div className="text-center py-24 text-slate-400 font-black">기록이 없습니다.</div> : reports.map(r => (
-             <div key={r.id} className="bg-white p-6 rounded-[36px] mb-5 border border-[#d1fae5] shadow-md">
+             <div key={r.id} className="bg-white p-6 rounded-[36px] mb-5 border border-[#d1fae5] shadow-md text-center">
                 <div className="flex justify-between items-center mb-4">
                    <span className="text-sm font-black text-[#1e293b] flex items-center gap-2">{TRASH_CATEGORIES.find(c => c.id === r.category)?.icon} {r.area}</span>
                    <button onClick={() => handleToggleStatus(r.id, r.status)} className={`text-[10px] font-black px-3 py-1 rounded-full ${r.status === 'solved' ? 'bg-[#10b981] text-white' : 'bg-slate-50 text-slate-400'}`}>{r.status === 'solved' ? '완료됨 ✓' : '진행중'}</button>
                 </div>
-                {r.image && <img src={r.image} className="w-full h-48 object-cover rounded-2xl mb-4" />}
+                {r.image && <img src={r.image} className="w-full h-48 object-cover rounded-2xl mb-4 mx-auto" />}
                 <p className="text-base text-slate-600 leading-relaxed font-semibold px-1 mb-4">{r.description || "내용 없음"}</p>
                 <div className="flex justify-between items-center pt-3 border-t border-slate-50">
                   <span className="text-[11px] text-slate-400 font-black flex items-center gap-1"><User size={12}/> {r.userName}</span>
@@ -425,7 +426,7 @@ export default function App() {
         </div>
       </main>
 
-      <nav className="h-[90px] bg-white border-t border-[#d1fae5] flex justify-around items-center px-4 pb-8 shadow-[0_-5px_20px_rgba(0,0,0,0.02)] shrink-0">
+      <nav className="h-[95px] bg-white border-t border-[#d1fae5] flex justify-around items-center px-4 pb-8 shadow-[0_-5px_20px_rgba(0,0,0,0.02)] shrink-0">
         <button onClick={() => setActiveTab('map')} className={`flex flex-col items-center gap-1.5 transition-all ${activeTab === 'map' ? 'text-[#10b981] scale-110' : 'text-slate-300'}`}>
           <MapPin size={26} fill={activeTab === 'map' ? 'currentColor' : 'none'} strokeWidth={3}/><span className="text-[11px] font-black">지도</span>
         </button>
