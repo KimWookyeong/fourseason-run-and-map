@@ -21,7 +21,6 @@ import {
 import { 
   MapPin, 
   BarChart3, 
-  PlusCircle, 
   List, 
   X, 
   User, 
@@ -32,17 +31,16 @@ import {
   LogOut, 
   Loader2,
   ShieldCheck,
-  CheckCircle2,
-  Image as ImageIcon
+  CheckCircle2
 } from 'lucide-react';
 
 /**
- * [사계절 런앤맵 - 데이지 앱 기반 최종 통합 안정화 버전]
- * 1. 디자인: 연녹색 테마 (#f0fdf4) 및 예쁜 네잎클로버 SVG 적용
- * 2. 지도 로딩: 입장 즉시 지도 100% 렌더링 보장 (invalidateSize)
- * 3. 사진 기능: 카메라 촬영 및 갤러리 선택 저장 연동 (압축 포함)
- * 4. 데이터 오류: 저장/삭제/상태 변경 전 강제 인증 로직 (Rule 3 준수)
- * 5. 상태 전환: '진행중' 클릭 시 '완료됨'으로 즉시 변경
+ * [사계절 런앤맵 - 최종 긴급 복구 및 기능 완전체 버전]
+ * 1. 실행 오류 해결: 초기 로딩 화면 및 렌더링 엔진 최적화로 하얀 화면 방지
+ * 2. 디자인: 대칭이 완벽하고 예쁜 고품질 네잎클로버 SVG 적용
+ * 3. 지도 로딩 보장: 입장 직후 지도 표시를 위한 초기화 타이밍 최적화
+ * 4. 데이터 철벽 방어: 모든 DB 작업(저장/삭제/상태변경) 전 인증 강제 완료 (Rule 3 준수)
+ * 5. 사진 기능: 카메라 촬영 및 갤러리 이미지 선택/압축/저장 기능 연동
  */
 
 const firebaseConfig = {
@@ -55,8 +53,8 @@ const firebaseConfig = {
   databaseURL: "https://fourseason-run-and-map-default-rtdb.firebaseio.com/" 
 };
 
-// 고유 앱 아이디 (안정적인 데이터 통신을 위해 v95로 갱신)
-const appId = 'fourseason-run-and-map-v95-stable'; 
+// 고유 앱 아이디 (안정적인 데이터 통신을 위해 v120으로 업데이트)
+const appId = 'fourseason-run-and-map-v120-stable'; 
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
@@ -72,14 +70,14 @@ const TRASH_CATEGORIES = [
 const GEUMJEONG_AREAS = ["부산대/장전동", "온천천/부곡동", "구서/남산동", "금사/서동", "금정산/노포동"];
 const GEUMJEONG_CENTER = [35.243, 129.092];
 
-// [커스텀] 정교한 네잎클로버 SVG 컴포넌트
-const CloverIcon = ({ size = 50, color = "#10b981" }) => (
-  <svg width={size} height={size} viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
-    <path d="M50 50C50 32 38 20 25 20C12 20 0 32 0 50C0 68 12 80 25 80C38 80 50 68 50 50Z" fill={color} />
-    <path d="M50 50C68 50 80 38 80 25C80 12 68 0 50 0C32 0 20 12 20 25C20 38 32 50 50 50Z" fill={color} />
-    <path d="M50 50C50 68 62 80 75 80C88 80 100 68 100 50C100 32 88 20 75 20C62 20 50 32 50 50Z" fill={color} />
-    <path d="M50 50C32 50 20 62 20 75C20 88 32 100 50 100C68 100 80 88 80 75C80 62 68 50 50 50Z" fill={color} />
-    <circle cx="50" cy="50" r="7" fill="white" opacity="0.3" />
+// [커스텀] 정교하게 디자인된 예쁜 네잎클로버 SVG
+const PrettyClover = ({ size = 50, color = "#10b981" }) => (
+  <svg width={size} height={size} viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" style={{ filter: 'drop-shadow(0 5px 12px rgba(0,0,0,0.12))' }}>
+    <path d="M50 50C50 30 38 18 24 18C10 18 0 30 0 50C0 70 10 82 24 82C38 82 50 70 50 50Z" fill={color} />
+    <path d="M50 50C70 50 82 38 82 24C82 10 70 0 50 0C30 0 18 10 18 24C18 38 30 50 50 50Z" fill={color} />
+    <path d="M50 50C50 70 62 82 76 82C90 82 100 70 100 50C100 30 90 18 76 18C62 18 50 30 50 50Z" fill={color} />
+    <path d="M50 50C30 50 18 62 18 76C18 90 30 100 50 100C70 100 82 90 82 76C82 62 70 50 50 50Z" fill={color} />
+    <circle cx="50" cy="50" r="7" fill="white" opacity="0.6" />
   </svg>
 );
 
@@ -91,6 +89,7 @@ export default function App() {
   const [reports, setReports] = useState([]);
   const [isLocating, setIsLocating] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
+  const [isAppReady, setIsAppReady] = useState(false);
   
   const mapContainerRef = useRef(null);
   const leafletMap = useRef(null);
@@ -103,7 +102,7 @@ export default function App() {
 
   const isAdmin = nickname.toLowerCase() === 'admin';
 
-  // 이미지 압축
+  // 이미지 압축 로직
   const compressImage = (base64) => {
     return new Promise((resolve) => {
       const img = new Image();
@@ -116,7 +115,10 @@ export default function App() {
         if (width > MAX_WIDTH) { height *= MAX_WIDTH / width; width = MAX_WIDTH; }
         canvas.width = width; canvas.height = height;
         const ctx = canvas.getContext('2d');
-        if (ctx) { ctx.drawImage(img, 0, 0, width, height); resolve(canvas.toDataURL('image/jpeg', 0.6)); }
+        if (ctx) {
+          ctx.drawImage(img, 0, 0, width, height);
+          resolve(canvas.toDataURL('image/jpeg', 0.6));
+        }
       };
     });
   };
@@ -147,12 +149,18 @@ export default function App() {
     }
   };
 
+  // 1. 초기화 및 인증 체크
   useEffect(() => {
-    ensureAuth();
+    const init = async () => {
+      await ensureAuth();
+      setIsAppReady(true);
+    };
+    init();
     const unsubscribe = onAuthStateChanged(auth, setUser);
     return () => unsubscribe();
   }, []);
 
+  // 2. 실시간 데이터 수신 (Rule 1)
   useEffect(() => {
     if (!user || !nickname) return;
     const coll = collection(db, 'artifacts', appId, 'public', 'data', 'reports');
@@ -161,11 +169,16 @@ export default function App() {
         .sort((a, b) => new Date(b.discoveredTime) - new Date(a.discoveredTime));
       setReports(data);
       updateMarkers(data);
-    }, (err) => console.error("데이터 수신 오류:", err));
+    }, (err) => console.error("Firestore 수신 오류:", err));
     return () => unsubscribe();
   }, [user, nickname]);
 
+  // 3. 지도 라이브러리 동적 로드
   useEffect(() => {
+    if (typeof window.L !== 'undefined') {
+      setIsScriptLoaded(true);
+      return;
+    }
     const link = document.createElement('link');
     link.rel = 'stylesheet'; link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
     document.head.appendChild(link);
@@ -175,21 +188,21 @@ export default function App() {
     document.head.appendChild(script);
   }, []);
 
+  // 4. 지도 초기화 로직 (참여 직후 즉시 표시 보장)
   useEffect(() => {
     if (isScriptLoaded && nickname && activeTab === 'map' && mapContainerRef.current) {
-      if (!leafletMap.current) {
-        setTimeout(() => {
-          if (!mapContainerRef.current) return;
+      const timer = setTimeout(() => {
+        if (!mapContainerRef.current) return;
+        if (!leafletMap.current) {
           leafletMap.current = window.L.map(mapContainerRef.current, { 
             zoomControl: false, attributionControl: false 
           }).setView(GEUMJEONG_CENTER, 14);
           window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(leafletMap.current);
           updateMarkers(reports);
-          setTimeout(() => { if (leafletMap.current) leafletMap.current.invalidateSize(); }, 600);
-        }, 400);
-      } else {
-        setTimeout(() => { if (leafletMap.current) leafletMap.current.invalidateSize(); }, 400);
-      }
+        }
+        leafletMap.current.invalidateSize();
+      }, 300);
+      return () => clearTimeout(timer);
     }
   }, [isScriptLoaded, activeTab, nickname]);
 
@@ -204,7 +217,7 @@ export default function App() {
       const iconHtml = `<div style="background-color:${cat.color}; width:32px; height:32px; border-radius:10px; border:2px solid ${pinColor}; display:flex; align-items:center; justify-content:center; font-size:18px; transform:rotate(45deg); box-shadow: 0 4px 12px rgba(0,0,0,0.2);"><div style="transform:rotate(-45deg)">${cat.icon}</div></div>`;
       const icon = window.L.divIcon({ html: iconHtml, className: 'custom-pin', iconSize: [32, 32], iconAnchor: [16, 16] });
       const marker = window.L.marker([report.location.lat, report.location.lng], { icon }).addTo(leafletMap.current);
-      marker.bindPopup(`<b>${cat.icon} ${cat.label}</b><br/><small>활동가: ${report.userName}</small>`);
+      marker.bindPopup(`<b>${cat.icon} ${cat.label}</b><br/><small>기록: ${report.userName}</small>`);
       markersRef.current[report.id] = marker;
     });
   };
@@ -216,18 +229,21 @@ export default function App() {
       await ensureAuth();
       localStorage.setItem('team_nickname', inputNickname);
       setNickname(inputNickname);
-    } catch (err) { alert("입장에 실패했습니다."); }
+    } catch (err) {
+      alert("입장에 실패했습니다. 인터넷 연결을 확인하세요.");
+    }
   };
 
   const handleSave = async (e) => {
     e.preventDefault();
     setIsUploading(true);
     try {
-      await ensureAuth(); 
+      await ensureAuth(); // 저장 전 강제 인증
       const center = leafletMap.current ? leafletMap.current.getCenter() : { lat: GEUMJEONG_CENTER[0], lng: GEUMJEONG_CENTER[1] };
       const loc = formData.customLocation || { lat: center.lat, lng: center.lng };
       const coll = collection(db, 'artifacts', appId, 'public', 'data', 'reports');
       await addDoc(coll, { ...formData, location: loc, userName: nickname, discoveredTime: new Date().toISOString() });
+      
       setFormData({ category: 'cup', area: GEUMJEONG_AREAS[0], description: '', status: 'pending', customLocation: null, image: null });
       setActiveTab('map');
       alert("성공적으로 저장되었습니다! 🍀");
@@ -240,7 +256,7 @@ export default function App() {
       await ensureAuth();
       await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'reports', reportId));
       alert("삭제되었습니다.");
-    } catch (err) { alert("삭제 실패"); }
+    } catch (err) { alert("삭제 실패: 권한이 없습니다."); }
   };
 
   const handleToggleStatus = async (reportId, currentStatus) => {
@@ -249,13 +265,13 @@ export default function App() {
       const newStatus = currentStatus === 'pending' ? 'solved' : 'pending';
       const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'reports', reportId);
       await updateDoc(docRef, { status: newStatus });
-      alert(newStatus === 'solved' ? "처리 완료! ✨" : "진행중으로 변경되었습니다.");
-    } catch (err) { alert("상태 변경 실패"); }
+      alert(newStatus === 'solved' ? "완료됨으로 변경되었습니다! ✨" : "진행중으로 변경되었습니다.");
+    } catch (err) { alert("상태 변경 실패: 다시 시도해 주세요."); }
   };
 
   const clearAllData = async () => {
     if (!isAdmin) return;
-    if (window.confirm("🚨 관리자 경고: 모든 데이터를 초기화하시겠습니까?")) {
+    if (window.confirm("🚨 관리자 경고: 모든 활동 기록을 영구 삭제하시겠습니까?")) {
       try {
         await ensureAuth();
         const coll = collection(db, 'artifacts', appId, 'public', 'data', 'reports');
@@ -263,7 +279,7 @@ export default function App() {
         const batch = writeBatch(db);
         snap.docs.forEach((d) => batch.delete(d.ref));
         await batch.commit();
-        alert("모든 기록이 초기화되었습니다.");
+        alert("모든 기록이 깨끗하게 초기화되었습니다.");
       } catch (err) { alert("초기화 실패"); }
     }
   };
@@ -277,17 +293,27 @@ export default function App() {
         setIsLocating(false);
         if (leafletMap.current) leafletMap.current.setView([coords.lat, coords.lng], 16);
       },
-      () => { setIsLocating(false); alert("GPS 수신 실패."); },
+      () => { setIsLocating(false); alert("GPS 수신 실패. 지도의 중심점이 기록됩니다."); },
       { enableHighAccuracy: true, timeout: 8000 }
     );
   };
 
+  // 초기 로딩 가드
+  if (!isAppReady) {
+    return (
+      <div style={{ position: 'fixed', inset: 0, backgroundColor: '#f0fdf4', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <Loader2 size={40} color="#10b981" style={{ animation: 'spin 1s linear infinite' }} />
+      </div>
+    );
+  }
+
+  // 닉네임 입력 화면
   if (!nickname) {
     return (
-      <div style={{ position: 'fixed', inset: 0, backgroundColor: '#f0fdf4', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '24px', zIndex: 9999 }}>
+      <div style={{ position: 'fixed', inset: 0, backgroundColor: '#f0fdf4', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '24px', zIndex: 9999, fontFamily: 'sans-serif' }}>
         <div style={{ marginBottom: '40px', textAlign: 'center', width: '100%' }}>
           <div style={{ margin: '0 auto 24px' }}>
-            <CloverIcon size={100} />
+            <PrettyClover size={130} />
           </div>
           <h1 style={{ fontSize: '2.8rem', fontWeight: '900', color: '#1e293b', marginBottom: '8px', letterSpacing: '-0.05em' }}>FOUR SEASONS</h1>
           <p style={{ fontSize: '0.9rem', fontWeight: '800', color: '#10b981', letterSpacing: '0.2em', textTransform: 'uppercase' }}>Run & Map Geumjeong</p>
@@ -313,10 +339,11 @@ export default function App() {
 
   return (
     <div style={{ position: 'fixed', inset: 0, display: 'flex', flexDirection: 'column', backgroundColor: '#f0fdf4', fontFamily: 'sans-serif', overflow: 'hidden' }}>
+      {/* 헤더 */}
       <header style={{ height: '70px', backgroundColor: 'white', borderBottom: '1px solid #d1fae5', display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 24px', zIndex: 1000, flexShrink: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           <div style={{ backgroundColor: isAdmin ? '#ef4444' : '#10b981', padding: '6px', borderRadius: '12px', color: 'white' }}>
-            {isAdmin ? <ShieldCheck size={20}/> : <CloverIcon size={20} color="white" />}
+            {isAdmin ? <ShieldCheck size={20}/> : <PrettyClover size={24} color="white" />}
           </div>
           <span style={{ fontSize: '1.1rem', fontWeight: '900', color: '#1e293b' }}>FOUR SEASONS</span>
         </div>
@@ -326,12 +353,15 @@ export default function App() {
         </div>
       </header>
 
+      {/* 메인 영역 */}
       <main style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
+        {/* Tab 1: 지도 */}
         <div style={{ position: 'absolute', inset: 0, display: activeTab === 'map' ? 'block' : 'none', zIndex: 10 }}>
           <div ref={mapContainerRef} style={{ width: '100%', height: '100%', minHeight: '100%', backgroundColor: '#f0fdf4' }} />
           <button onClick={() => setActiveTab('add')} style={{ position: 'absolute', bottom: '35px', left: '50%', transform: 'translateX(-50%)', backgroundColor: '#1e293b', color: 'white', border: 'none', fontWeight: '900', borderRadius: '50px', padding: '20px 45px', fontSize: '1.2rem', zIndex: 1001, boxShadow: '0 25px 35px -5px rgba(0, 0, 0, 0.3)', cursor: 'pointer' }}>기록하기 +</button>
         </div>
 
+        {/* Tab 2: 추가 */}
         <div style={{ position: 'absolute', inset: 0, display: activeTab === 'add' ? 'block' : 'none', backgroundColor: '#f0fdf4', padding: '32px', overflowY: 'auto', zIndex: 20 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '32px' }}>
             <h2 style={{ fontSize: '1.7rem', fontWeight: '900', color: '#1e293b', margin: 0 }}>NEW RECORD</h2>
@@ -345,7 +375,7 @@ export default function App() {
                 </button>
                 <label style={{ height: '120px', borderRadius: '35px', backgroundColor: 'white', border: '2px dashed #d1fae5', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '10px', color: '#10b981', cursor: 'pointer', overflow: 'hidden' }}>
                    <input type="file" accept="image/*" onChange={handleImageChange} style={{ display: 'none' }} />
-                   {formData.image ? <img src={formData.image} style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <><Camera size={32}/><span style={{ fontSize: '0.85rem', fontWeight: '900' }}>카메라/갤러리</span></>}
+                   {formData.image ? <img src={formData.image} style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <><Camera size={32}/><span style={{ fontSize: '0.85rem', fontWeight: '900' }}>사진 촬영/선택</span></>}
                 </label>
              </div>
              <select value={formData.area} onChange={e => setFormData({...formData, area: e.target.value})} style={{ padding: '20px', borderRadius: '25px', border: '2px solid #e2e8f0', fontWeight: 'bold', fontSize: '1.1rem', outline: 'none', backgroundColor: 'white' }}>
@@ -371,7 +401,7 @@ export default function App() {
            {reports.length === 0 ? <div style={{ textAlign: 'center', padding: '120px 0', color: '#94a3b8', fontWeight: '900' }}>기록이 없습니다.</div> : reports.map(r => (
              <div key={r.id} style={{ backgroundColor: 'white', padding: '28px', borderRadius: '40px', marginBottom: '25px', border: '1px solid #d1fae5', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.05)' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '22px' }}>
-                   <span style={{ fontSize: '1rem', fontWeight: '900', color: '#1e293b', display: 'flex', alignItems: 'center', gap: '10px' }}>{TRASH_CATEGORIES.find(c => c.id === r.category)?.icon} {r.area}</span>
+                   <span style={{ fontSize: '1rem', fontWeight: '900', color: '#1e293b', display: 'flex', alignItems: 'center', gap: '8px' }}>{TRASH_CATEGORIES.find(c => c.id === r.category)?.icon} {r.area}</span>
                    <button onClick={() => handleToggleStatus(r.id, r.status)} style={{ border: 'none', padding: '8px 18px', borderRadius: '25px', fontSize: '12px', fontWeight: '900', backgroundColor: r.status === 'solved' ? '#10b981' : '#f1f5f9', color: r.status === 'solved' ? 'white' : '#94a3b8', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '5px' }}>
                       {r.status === 'solved' ? <CheckCircle2 size={12}/> : null} {r.status === 'solved' ? '완료됨 ✓' : '진행중'}
                    </button>
@@ -388,7 +418,7 @@ export default function App() {
 
         {/* Tab 4: 통계 */}
         <div style={{ position: 'absolute', inset: 0, display: activeTab === 'stats' ? 'block' : 'none', backgroundColor: '#f0fdf4', padding: '32px', overflowY: 'auto', zIndex: 20 }}>
-           <h2 style={{ fontSize: '1.7rem', fontWeight: '900', color: '#1e293b', marginBottom: '32px' }}>ACTIVITY STATS</h2>
+           <h2 style={{ fontSize: '1.7rem', fontWeight: '900', color: '#1e293b', marginBottom: '35px' }}>ACTIVITY STATS</h2>
            <div style={{ backgroundColor: '#1e293b', padding: '55px 25px', borderRadius: '55px', textAlign: 'center', marginBottom: '30px', boxShadow: '0 25px 35px -5px rgba(0, 0, 0, 0.15)' }}>
               <h3 style={{ fontSize: '4.5rem', fontWeight: '900', color: 'white', margin: '0 0 10px 0' }}>{reports.length}</h3>
               <p style={{ fontSize: '0.9rem', fontWeight: '900', color: '#10b981', letterSpacing: '0.3em', textTransform: 'uppercase' }}>Total Trash Found</p>
